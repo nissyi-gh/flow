@@ -37,16 +37,11 @@ var (
 	statusStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
 	errorStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("196"))
 	confirmStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("212")).Bold(true)
-	detailStyle  = lipgloss.NewStyle().
+	detailStyle = lipgloss.NewStyle().
 			Padding(1, 2).
 			BorderLeft(true).
 			BorderStyle(lipgloss.NormalBorder()).
-			BorderForeground(lipgloss.Color("241"))
-	descBoxStyle = lipgloss.NewStyle().
-			Padding(0, 1).
-			Border(lipgloss.RoundedBorder()).
-			BorderForeground(lipgloss.Color("241"))
-
+			BorderForeground(lipgloss.Color("170"))
 	tagColorPalette = []string{"39", "205", "148", "214", "141", "81", "203", "227"}
 )
 
@@ -672,48 +667,63 @@ func (m Model) renderDetail() string {
 	if !ok {
 		return ""
 	}
-	todayMark := ""
-	if item.Task.IsToday() {
-		todayMark = "📌 "
-	}
-	descContent := statusStyle.Render("(no description)")
-	if item.Task.Description != nil && *item.Task.Description != "" {
-		descContent = *item.Task.Description
-	}
-	desc := descBoxStyle.Render(descContent)
 
-	tagsLine := ""
+	var sb strings.Builder
+	sectionHeader := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("170"))
+
+	// # Title line with marks
+	var marks []string
+	if item.Task.IsOverdue() {
+		marks = append(marks, "⚠️")
+	}
+	if item.Task.IsDueToday() {
+		marks = append(marks, "📅")
+	}
+	if item.Task.IsToday() {
+		marks = append(marks, "📌")
+	}
 	if len(item.Task.Tags) > 0 {
-		var tagBadges []string
 		for _, tag := range item.Task.Tags {
 			badge := lipgloss.NewStyle().
 				Foreground(lipgloss.Color(tag.Color)).
 				Bold(true).
 				Render("[" + tag.Name + "]")
-			tagBadges = append(tagBadges, badge)
+			marks = append(marks, badge)
 		}
-		tagsLine = "\ntags: " + strings.Join(tagBadges, " ") + "\n"
+	}
+	titleLine := item.Task.Title
+	if len(marks) > 0 {
+		titleLine = strings.Join(marks, " ") + " " + titleLine
+	}
+	sb.WriteString(titleStyle.Render(titleLine))
+
+	// ## Description
+	sb.WriteString("\n\n")
+	sb.WriteString(sectionHeader.Render("Description"))
+	sb.WriteString("\n")
+	if item.Task.Description != nil && *item.Task.Description != "" {
+		sb.WriteString(*item.Task.Description)
+	} else {
+		sb.WriteString(statusStyle.Render("(no description)"))
 	}
 
-	dueLine := ""
+	// ## Property
+	sb.WriteString("\n\n")
+	sb.WriteString(sectionHeader.Render("Property"))
+	sb.WriteString("\n")
+
+	dueValue := statusStyle.Render("-")
 	if item.Task.DueDate != nil {
-		label := "due_date:  " + *item.Task.DueDate
-		if item.Task.IsOverdue() {
-			label = errorStyle.Render("⚠️ " + label)
-		} else if item.Task.IsDueToday() {
-			label = "📅 " + label
-		}
-		dueLine = "\n" + label
+		dueValue = *item.Task.DueDate
 	}
-	return fmt.Sprintf("%s%s\n\n%s%s\n\ncreated_at: %s%s\n\n%s",
-		todayMark,
-		item.Task.Title,
-		desc,
-		tagsLine,
-		item.Task.CreatedAt.Format("2006-01-02 15:04"),
-		dueLine,
-		statusStyle.Render("e: edit description  T: tags"),
-	)
+	sb.WriteString(fmt.Sprintf("due_date:    %s\n", dueValue))
+	sb.WriteString(fmt.Sprintf("created_at:  %s", item.Task.CreatedAt.Format("2006-01-02 15:04")))
+
+	// Footer
+	sb.WriteString("\n\n")
+	sb.WriteString(statusStyle.Render("e: edit description  T: tags"))
+
+	return sb.String()
 }
 
 func (m Model) View() string {
@@ -862,7 +872,7 @@ func (m Model) View() string {
 			Width(rightWidth).
 			Height(contentHeight).
 			Render(m.renderDetail())
-		_ = leftWidth // leftWidth is controlled via SetSize
+		_ = leftWidth
 		content := lipgloss.JoinHorizontal(lipgloss.Top, leftPane, rightPane)
 		return appStyle.Render(content + errView)
 	}
