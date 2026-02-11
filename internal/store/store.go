@@ -523,6 +523,36 @@ func (s *TaskStore) TagsForTask(taskID int) ([]model.Tag, error) {
 	return tags, rows.Err()
 }
 
+// ChildrenOf returns the direct child tasks of a given parent task.
+func (s *TaskStore) ChildrenOf(parentID int) ([]model.Task, error) {
+	rows, err := s.db.Query(
+		"SELECT id, title, completed, created_at, parent_id, scheduled_on, due_date, description FROM tasks WHERE parent_id = ? ORDER BY created_at ASC",
+		parentID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("query children of task %d: %w", parentID, err)
+	}
+	defer rows.Close()
+
+	var tasks []model.Task
+	for rows.Next() {
+		t, err := scanTask(rows)
+		if err != nil {
+			return nil, fmt.Errorf("scan child task: %w", err)
+		}
+		tasks = append(tasks, t)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	if err := s.loadTagsForTasks(tasks); err != nil {
+		return nil, fmt.Errorf("load tags for children: %w", err)
+	}
+
+	return tasks, nil
+}
+
 // Close closes the database connection.
 func (s *TaskStore) Close() error {
 	return s.db.Close()

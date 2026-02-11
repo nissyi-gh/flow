@@ -4,13 +4,16 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/atotto/clipboard"
 	"github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/bubbles/list"
 	"github.com/charmbracelet/bubbles/textarea"
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/nissyi-gh/flow/internal/importer"
 	"github.com/nissyi-gh/flow/internal/model"
+	"github.com/nissyi-gh/flow/internal/prompt"
 	"github.com/nissyi-gh/flow/internal/store"
 )
 
@@ -23,6 +26,9 @@ const (
 	stateDueDate
 	stateEditDesc
 	stateTagSelect
+	stateGenerate
+	stateImportSelect
+	stateImportResult
 )
 
 var (
@@ -45,14 +51,16 @@ var (
 )
 
 type extraKeyMap struct {
-	Add      key.Binding
-	SubAdd   key.Binding
-	Toggle   key.Binding
-	Delete   key.Binding
-	Today    key.Binding
+	Add       key.Binding
+	SubAdd    key.Binding
+	Toggle    key.Binding
+	Delete    key.Binding
+	Today     key.Binding
 	DueDate   key.Binding
 	EditDesc  key.Binding
 	TagSelect key.Binding
+	Generate  key.Binding
+	Import    key.Binding
 }
 
 func newExtraKeyMap() extraKeyMap {
@@ -89,6 +97,14 @@ func newExtraKeyMap() extraKeyMap {
 			key.WithKeys("T"),
 			key.WithHelp("T", "tags"),
 		),
+		Generate: key.NewBinding(
+			key.WithKeys("g"),
+			key.WithHelp("g", "AI prompt"),
+		),
+		Import: key.NewBinding(
+			key.WithKeys("G"),
+			key.WithHelp("G", "import YAML"),
+		),
 	}
 }
 
@@ -108,11 +124,16 @@ type Model struct {
 	allTags       []model.Tag
 	assignedTags  map[int]bool
 	tagCursor     int
-	tagCreating   bool
-	tagInput      textinput.Model
-	err           error
-	width         int
-	height        int
+	tagCreating    bool
+	tagInput       textinput.Model
+	genCursor       int
+	importCursor    int
+	importYAML      string
+	importResult    string
+	importIsError   bool
+	err            error
+	width          int
+	height         int
 }
 
 type tasksLoadedMsg []model.Task
@@ -137,10 +158,10 @@ func NewModel(s *store.TaskStore) Model {
 	l.SetFilteringEnabled(true)
 	l.SetStatusBarItemName("task", "tasks")
 	l.AdditionalShortHelpKeys = func() []key.Binding {
-		return []key.Binding{keys.Add, keys.SubAdd, keys.Toggle, keys.Delete, keys.Today, keys.DueDate, keys.EditDesc, keys.TagSelect}
+		return []key.Binding{keys.Add, keys.SubAdd, keys.Toggle, keys.Delete, keys.Today, keys.DueDate, keys.EditDesc, keys.TagSelect, keys.Generate, keys.Import}
 	}
 	l.AdditionalFullHelpKeys = func() []key.Binding {
-		return []key.Binding{keys.Add, keys.SubAdd, keys.Toggle, keys.Delete, keys.Today, keys.DueDate, keys.EditDesc, keys.TagSelect}
+		return []key.Binding{keys.Add, keys.SubAdd, keys.Toggle, keys.Delete, keys.Today, keys.DueDate, keys.EditDesc, keys.TagSelect, keys.Generate, keys.Import}
 	}
 
 	ta := textarea.New()
@@ -217,6 +238,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.updateEditDesc(msg)
 	case stateTagSelect:
 		return m.updateTagSelect(msg)
+	case stateGenerate:
+		return m.updateGenerate(msg)
+	case stateImportSelect:
+		return m.updateImportSelect(msg)
+	case stateImportResult:
+		return m.updateImportResult(msg)
 	}
 
 	return m, nil
@@ -301,6 +328,22 @@ func (m Model) updateList(msg tea.Msg) (tea.Model, tea.Cmd) {
 				cmd := m.descInput.Focus()
 				return m, cmd
 			}
+		case "g":
+			m.state = stateGenerate
+			m.genCursor = 0
+			return m, nil
+		case "G":
+			content, err := clipboard.ReadAll()
+			if err != nil {
+				m.importResult = fmt.Sprintf("クリップボードの読み取りに失敗しました: %v", err)
+				m.importIsError = true
+				m.state = stateImportResult
+				return m, nil
+			}
+			m.importYAML = stripCodeBlock(content)
+			m.importCursor = 0
+			m.state = stateImportSelect
+			return m, nil
 		case "d":
 			if m.list.SelectedItem() != nil {
 				m.state = stateConfirm
@@ -441,6 +484,138 @@ func (m Model) updateTagSelect(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+func (m Model) updateGenerate(msg tea.Msg) (tea.Model, tea.Cmd) {
+	if keyMsg, ok := msg.(tea.KeyMsg); ok {
+		switch keyMsg.String() {
+		case "j", "down":
+			if m.genCursor < 1 {
+				m.genCursor++
+			}
+		case "k", "up":
+			if m.genCursor > 0 {
+				m.genCursor--
+			}
+		case "enter":
+			if m.genCursor == 0 {
+				// New task breakdown
+				p := prompt.GenerateNew()
+				if err := clipboard.WriteAll(p); err != nil {
+					m.importResult = fmt.Sprintf("クリップボードへのコピーに失敗しました: %v", err)
+					m.importIsError = true
+				} else {
+					m.importResult = "新規タスク分解用のプロンプトをクリップボードにコピーしました"
+					m.importIsError = false
+				}
+				m.state = stateImportResult
+				return m, nil
+			} else {
+				// Improve existing task
+				item, ok := m.list.SelectedItem().(TaskItem)
+				if !ok {
+					m.state = stateList
+					return m, nil
+				}
+				children, err := m.store.ChildrenOf(item.Task.ID)
+				if err != nil {
+					m.err = err
+					m.state = stateList
+					return m, nil
+				}
+				p := prompt.GenerateFromTask(item.Task, children)
+				if err := clipboard.WriteAll(p); err != nil {
+					m.importResult = fmt.Sprintf("クリップボードへのコピーに失敗しました: %v", err)
+					m.importIsError = true
+				} else {
+					m.importResult = fmt.Sprintf("「%s」の分解プロンプトをクリップボードにコピーしました", item.Task.Title)
+					m.importIsError = false
+				}
+				m.state = stateImportResult
+				return m, nil
+			}
+		case "esc":
+			m.state = stateList
+			return m, nil
+		}
+	}
+	return m, nil
+}
+
+func (m Model) updateImportSelect(msg tea.Msg) (tea.Model, tea.Cmd) {
+	if keyMsg, ok := msg.(tea.KeyMsg); ok {
+		switch keyMsg.String() {
+		case "j", "down":
+			if m.importCursor < 1 {
+				m.importCursor++
+			}
+		case "k", "up":
+			if m.importCursor > 0 {
+				m.importCursor--
+			}
+		case "enter":
+			var parentID *int
+			if m.importCursor == 1 {
+				if item, ok := m.list.SelectedItem().(TaskItem); ok {
+					id := item.Task.ID
+					parentID = &id
+				}
+			}
+			return m.doImport(parentID)
+		case "esc":
+			m.state = stateList
+			return m, nil
+		}
+	}
+	return m, nil
+}
+
+func (m Model) doImport(parentID *int) (tea.Model, tea.Cmd) {
+	count, err := importer.Import(m.store, m.importYAML, parentID)
+	if err != nil {
+		m.importResult = fmt.Sprintf("YAMLのインポートに失敗しました: %v", err)
+		m.importIsError = true
+		m.state = stateImportResult
+		return m, nil
+	}
+
+	m.importResult = fmt.Sprintf("✓ %d 件のタスクをインポートしました", count)
+	m.importIsError = false
+	m.state = stateImportResult
+	return m, nil
+}
+
+func stripCodeBlock(s string) string {
+	lines := strings.Split(s, "\n")
+	var result []string
+	inBlock := false
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if !inBlock && (trimmed == "```yaml" || trimmed == "```yml" || trimmed == "```") {
+			inBlock = true
+			continue
+		}
+		if inBlock && trimmed == "```" {
+			inBlock = false
+			continue
+		}
+		if inBlock {
+			result = append(result, line)
+		}
+	}
+	// If no code block was found, return original
+	if len(result) == 0 {
+		return s
+	}
+	return strings.Join(result, "\n")
+}
+
+func (m Model) updateImportResult(msg tea.Msg) (tea.Model, tea.Cmd) {
+	if _, ok := msg.(tea.KeyMsg); ok {
+		m.state = stateList
+		return m, m.loadTasks
+	}
+	return m, nil
+}
+
 func (m Model) updateConfirm(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if keyMsg, ok := msg.(tea.KeyMsg); ok {
 		switch keyMsg.String() {
@@ -548,6 +723,63 @@ func (m Model) View() string {
 	}
 
 	switch m.state {
+	case stateGenerate:
+		options := []string{"新しいタスクを分解する", "既存タスクを改善する"}
+		var taskName string
+		if item, ok := m.list.SelectedItem().(TaskItem); ok {
+			taskName = item.Task.Title
+		}
+		if taskName != "" {
+			options[1] = fmt.Sprintf("既存タスクを改善する (%s)", taskName)
+		}
+
+		var lines []string
+		for i, opt := range options {
+			cursor := "  "
+			if i == m.genCursor {
+				cursor = "> "
+			}
+			lines = append(lines, cursor+opt)
+		}
+		content := titleStyle.Render("AI Task Breakdown") + "\n\n" +
+			strings.Join(lines, "\n") + "\n\n" +
+			statusStyle.Render("j/k: navigate  enter: select  esc: cancel")
+		return appStyle.Render(content + errView)
+
+	case stateImportSelect:
+		options := []string{"ルートタスクとしてインポート"}
+		if item, ok := m.list.SelectedItem().(TaskItem); ok {
+			options = append(options, fmt.Sprintf("「%s」の子タスクとしてインポート", item.Task.Title))
+		} else {
+			options = append(options, "選択中タスクの子タスクとしてインポート (未選択)")
+		}
+
+		var lines []string
+		for i, opt := range options {
+			cursor := "  "
+			if i == m.importCursor {
+				cursor = "> "
+			}
+			lines = append(lines, cursor+opt)
+		}
+		content := titleStyle.Render("Import YAML") + "\n\n" +
+			strings.Join(lines, "\n") + "\n\n" +
+			statusStyle.Render("j/k: navigate  enter: select  esc: cancel")
+		return appStyle.Render(content + errView)
+
+	case stateImportResult:
+		var icon string
+		style := titleStyle
+		if m.importIsError {
+			icon = "✗ "
+			style = errorStyle
+		} else {
+			icon = ""
+		}
+		content := style.Render(icon+m.importResult) + "\n\n" +
+			statusStyle.Render("press any key to continue")
+		return appStyle.Render(content + errView)
+
 	case stateTagSelect:
 		var lines []string
 		for i, tag := range m.allTags {
