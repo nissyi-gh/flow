@@ -33,15 +33,15 @@ const (
 
 var (
 	appStyle     = lipgloss.NewStyle().Padding(1, 2)
-	titleStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("170")).Bold(true)
-	statusStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
-	errorStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("196"))
-	confirmStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("212")).Bold(true)
+	titleStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("39")).Bold(true)
+	statusStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
+	errorStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("203"))
+	confirmStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("75")).Bold(true)
 	detailStyle = lipgloss.NewStyle().
 			Padding(1, 2).
 			BorderLeft(true).
 			BorderStyle(lipgloss.NormalBorder()).
-			BorderForeground(lipgloss.Color("170"))
+			BorderForeground(lipgloss.Color("39"))
 	tagColorPalette = []string{"39", "205", "148", "214", "141", "81", "203", "227"}
 )
 
@@ -146,6 +146,14 @@ func NewModel(s *store.TaskStore) Model {
 	delegate.ShowDescription = false
 	delegate.SetHeight(1)
 	delegate.SetSpacing(0)
+	delegate.Styles.SelectedTitle = lipgloss.NewStyle().
+		Foreground(lipgloss.Color("75")).
+		Bold(true).
+		Padding(0, 0, 0, 1).
+		BorderLeft(true).
+		BorderStyle(lipgloss.NormalBorder()).
+		BorderForeground(lipgloss.Color("75"))
+	delegate.Styles.SelectedDesc = delegate.Styles.SelectedTitle
 	l := list.New(nil, delegate, 0, 0)
 	l.Title = "flow"
 	l.Styles.Title = titleStyle
@@ -664,7 +672,7 @@ func (m Model) renderDetail() string {
 	}
 
 	var sb strings.Builder
-	sectionHeader := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("170"))
+	sectionHeader := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("39"))
 
 	// # Title line with marks
 	var marks []string
@@ -722,7 +730,7 @@ func (m Model) renderDetail() string {
 }
 
 func (m Model) renderHelp(width int) string {
-	keyStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("170"))
+	keyStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("39"))
 
 	items := []struct{ key, desc string }{
 		{"a/n", "add"}, {"s", "sub-task"}, {"enter/x", "toggle"}, {"d", "delete"},
