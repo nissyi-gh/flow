@@ -2,7 +2,6 @@ package main
 
 import (
 	"fmt"
-	"strings"
 	"time"
 )
 
@@ -17,8 +16,11 @@ type Task struct {
 
 // taskItem wraps Task to satisfy the list.DefaultItem interface.
 type taskItem struct {
-	task  Task
-	depth int
+	task Task
+	// prefix holds the tree-drawing characters, e.g. "│  └─ "
+	prefix string
+	// descPrefix holds the continuation lines for the description row
+	descPrefix string
 }
 
 func (i taskItem) Title() string {
@@ -26,13 +28,11 @@ func (i taskItem) Title() string {
 	if i.task.Completed {
 		check = "[x]"
 	}
-	indent := strings.Repeat("  ", i.depth)
-	return fmt.Sprintf("%s%s %s", indent, check, i.task.Title)
+	return fmt.Sprintf("%s%s %s", i.prefix, check, i.task.Title)
 }
 
 func (i taskItem) Description() string {
-	indent := strings.Repeat("  ", i.depth)
-	return indent + i.task.CreatedAt.Format("2006-01-02 15:04")
+	return i.descPrefix + i.task.CreatedAt.Format("2006-01-02 15:04")
 }
 
 func (i taskItem) FilterValue() string {

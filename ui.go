@@ -111,7 +111,8 @@ func (m model) loadTasks() tea.Msg {
 	return tasksLoadedMsg(tasks)
 }
 
-// buildTree converts a flat task list into a tree-ordered list of taskItems with depth.
+// buildTree converts a flat task list into a tree-ordered list of taskItems
+// with tree-drawing prefixes (├─, └─, │).
 func buildTree(tasks []Task) []taskItem {
 	children := make(map[int][]Task) // parentID -> children
 	var roots []Task
@@ -125,16 +126,43 @@ func buildTree(tasks []Task) []taskItem {
 	}
 
 	var items []taskItem
-	var dfs func(task Task, depth int)
-	dfs = func(task Task, depth int) {
-		items = append(items, taskItem{task: task, depth: depth})
-		for _, child := range children[task.ID] {
-			dfs(child, depth+1)
+	// ancestors tracks whether each depth level's parent still has remaining siblings.
+	// true = more siblings follow (draw │), false = last child (draw space).
+	var dfs func(task Task, ancestors []bool)
+	dfs = func(task Task, ancestors []bool) {
+		depth := len(ancestors)
+		var prefix, descPrefix string
+		if depth > 0 {
+			// Build the leading columns from ancestor context
+			for _, hasSibling := range ancestors[:depth-1] {
+				if hasSibling {
+					prefix += "│  "
+					descPrefix += "│  "
+				} else {
+					prefix += "   "
+					descPrefix += "   "
+				}
+			}
+			// Current level connector
+			if ancestors[depth-1] {
+				prefix += "├─ "
+				descPrefix += "│  "
+			} else {
+				prefix += "└─ "
+				descPrefix += "   "
+			}
+		}
+
+		items = append(items, taskItem{task: task, prefix: prefix, descPrefix: descPrefix})
+		kids := children[task.ID]
+		for idx, child := range kids {
+			isLast := idx == len(kids)-1
+			dfs(child, append(ancestors, !isLast))
 		}
 	}
 
 	for _, root := range roots {
-		dfs(root, 0)
+		dfs(root, nil)
 	}
 	return items
 }
