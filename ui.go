@@ -1,6 +1,7 @@
 package main
 
 import (
+	"github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/bubbles/list"
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
@@ -16,16 +17,42 @@ const (
 )
 
 var (
-	appStyle    = lipgloss.NewStyle().Padding(1, 2)
-	titleStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("170")).Bold(true)
-	statusStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
+	appStyle      = lipgloss.NewStyle().Padding(1, 2)
+	titleStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("170")).Bold(true)
+	statusStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
+	errorStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("196"))
+	confirmStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("212")).Bold(true)
 )
+
+type extraKeyMap struct {
+	Add    key.Binding
+	Toggle key.Binding
+	Delete key.Binding
+}
+
+func newExtraKeyMap() extraKeyMap {
+	return extraKeyMap{
+		Add: key.NewBinding(
+			key.WithKeys("a", "n"),
+			key.WithHelp("a/n", "add"),
+		),
+		Toggle: key.NewBinding(
+			key.WithKeys("enter", "x"),
+			key.WithHelp("enter/x", "toggle"),
+		),
+		Delete: key.NewBinding(
+			key.WithKeys("d"),
+			key.WithHelp("d", "delete"),
+		),
+	}
+}
 
 type model struct {
 	state   appState
 	list    list.Model
 	input   textinput.Model
 	store   *TaskStore
+	keys    extraKeyMap
 	err     error
 	width   int
 	height  int
@@ -35,24 +62,32 @@ type tasksLoadedMsg []Task
 type errMsg struct{ error }
 
 func newModel(store *TaskStore) model {
-	// Text input for adding tasks
 	ti := textinput.New()
 	ti.Placeholder = "Task title..."
 	ti.CharLimit = 256
 
-	// List delegate
+	keys := newExtraKeyMap()
+
 	delegate := list.NewDefaultDelegate()
 	l := list.New(nil, delegate, 0, 0)
 	l.Title = "flow"
 	l.Styles.Title = titleStyle
 	l.SetShowHelp(true)
 	l.SetFilteringEnabled(true)
+	l.SetStatusBarItemName("task", "tasks")
+	l.AdditionalShortHelpKeys = func() []key.Binding {
+		return []key.Binding{keys.Add, keys.Toggle, keys.Delete}
+	}
+	l.AdditionalFullHelpKeys = func() []key.Binding {
+		return []key.Binding{keys.Add, keys.Toggle, keys.Delete}
+	}
 
 	return model{
 		state: stateList,
 		list:  l,
 		input: ti,
 		store: store,
+		keys:  keys,
 	}
 }
 
@@ -83,6 +118,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			items[i] = taskItem{task: t}
 		}
 		m.list.SetItems(items)
+		m.err = nil
 		return m, nil
 
 	case errMsg:
@@ -174,21 +210,28 @@ func (m model) updateConfirm(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m model) View() string {
+	var errView string
+	if m.err != nil {
+		errView = "\n" + errorStyle.Render("Error: "+m.err.Error()) + "\n"
+	}
+
 	switch m.state {
 	case stateAdd:
 		return appStyle.Render(
 			titleStyle.Render("New Task") + "\n\n" +
 				m.input.View() + "\n\n" +
-				statusStyle.Render("enter: save • esc: cancel"),
+				statusStyle.Render("enter: save • esc: cancel") +
+				errView,
 		)
 	case stateConfirm:
 		item, _ := m.list.SelectedItem().(taskItem)
 		return appStyle.Render(
-			titleStyle.Render("Delete Task?") + "\n\n" +
+			confirmStyle.Render("Delete Task?") + "\n\n" +
 				"  " + item.task.Title + "\n\n" +
-				statusStyle.Render("y: delete • n/esc: cancel"),
+				statusStyle.Render("y: delete • n/esc: cancel") +
+				errView,
 		)
 	default:
-		return appStyle.Render(m.list.View())
+		return appStyle.Render(m.list.View() + errView)
 	}
 }
