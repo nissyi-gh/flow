@@ -2,7 +2,6 @@ package ui
 
 import (
 	"fmt"
-	"time"
 
 	"github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/bubbles/list"
@@ -78,6 +77,7 @@ type Model struct {
 	state       appState
 	list        list.Model
 	input       textinput.Model
+	dateInput   dateInput
 	store       *store.TaskStore
 	keys        extraKeyMap
 	addParentID   *int
@@ -116,11 +116,12 @@ func NewModel(s *store.TaskStore) Model {
 	}
 
 	return Model{
-		state: stateList,
-		list:  l,
-		input: ti,
-		store: s,
-		keys:  keys,
+		state:     stateList,
+		list:      l,
+		input:     ti,
+		dateInput: newDateInput(),
+		store:     s,
+		keys:      keys,
 	}
 }
 
@@ -214,13 +215,12 @@ func (m Model) updateList(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if item, ok := m.list.SelectedItem().(TaskItem); ok {
 				m.state = stateDueDate
 				m.dueDateTaskID = item.Task.ID
-				m.input.Reset()
-				m.input.Placeholder = "YYYY-MM-DD (empty to clear)"
+				m.dateInput = newDateInput()
 				if item.Task.DueDate != nil {
-					m.input.SetValue(*item.Task.DueDate)
+					m.dateInput.SetValue(*item.Task.DueDate)
 				}
-				cmd := m.input.Focus()
-				return m, cmd
+				m.dateInput.Focus()
+				return m, nil
 			}
 		case "d":
 			if m.list.SelectedItem() != nil {
@@ -283,32 +283,31 @@ func (m Model) updateDueDate(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if keyMsg, ok := msg.(tea.KeyMsg); ok {
 		switch keyMsg.String() {
 		case "enter":
-			val := m.input.Value()
-			if val == "" {
+			if m.dateInput.IsEmpty() {
 				if err := m.store.SetDueDate(m.dueDateTaskID, nil); err != nil {
 					m.err = err
 				}
-			} else {
-				if _, err := time.Parse("2006-01-02", val); err != nil {
-					m.err = fmt.Errorf("invalid date format: %s (expected YYYY-MM-DD)", val)
-					return m, nil
-				}
-				if err := m.store.SetDueDate(m.dueDateTaskID, &val); err != nil {
-					m.err = err
-				}
+				m.state = stateList
+				return m, m.loadTasks
+			}
+			val, err := m.dateInput.Value()
+			if err != nil {
+				m.err = err
+				return m, nil
+			}
+			if err := m.store.SetDueDate(m.dueDateTaskID, &val); err != nil {
+				m.err = err
 			}
 			m.state = stateList
-			m.input.Placeholder = "Task title..."
 			return m, m.loadTasks
 		case "esc":
 			m.state = stateList
-			m.input.Placeholder = "Task title..."
 			return m, nil
 		}
 	}
 
 	var cmd tea.Cmd
-	m.input, cmd = m.input.Update(msg)
+	m.dateInput, cmd = m.dateInput.Update(msg)
 	return m, cmd
 }
 
@@ -360,8 +359,8 @@ func (m Model) View() string {
 	case stateDueDate:
 		return appStyle.Render(
 			titleStyle.Render("Set Due Date") + "\n\n" +
-				m.input.View() + "\n\n" +
-				statusStyle.Render("enter: save • esc: cancel") +
+				m.dateInput.View() + "\n\n" +
+				statusStyle.Render("tab/→: next field • enter: save • esc: cancel") +
 				errView,
 		)
 	case stateConfirm:
