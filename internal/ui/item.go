@@ -3,6 +3,7 @@ package ui
 import (
 	"fmt"
 
+	"github.com/charmbracelet/lipgloss"
 	"github.com/nissyi-gh/flow/internal/model"
 )
 
@@ -30,7 +31,16 @@ func (i TaskItem) Title() string {
 	} else if i.Task.IsDueToday() {
 		dueMark = "📅 "
 	}
-	return fmt.Sprintf("%s%s %s%s%s", i.Prefix, check, dueMark, todayMark, i.Task.Title)
+	title := fmt.Sprintf("%s%s %s%s%s", i.Prefix, check, dueMark, todayMark, i.Task.Title)
+
+	for _, tag := range i.Task.Tags {
+		badge := lipgloss.NewStyle().
+			Foreground(lipgloss.Color(tag.Color)).
+			Render("[" + tag.Name + "]")
+		title += " " + badge
+	}
+
+	return title
 }
 
 func (i TaskItem) Description() string {

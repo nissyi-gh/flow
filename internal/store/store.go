@@ -88,6 +88,11 @@ func NewTaskStore(dbPath string) (*TaskStore, error) {
 		return nil, fmt.Errorf("migrate description: %w", err)
 	}
 
+	if err := migrateTags(db); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("migrate tags: %w", err)
+	}
+
 	return &TaskStore{db: db}, nil
 }
 
@@ -219,6 +224,28 @@ func migrateDescription(db *sql.DB) error {
 	return nil
 }
 
+func migrateTags(db *sql.DB) error {
+	_, err := db.Exec(`CREATE TABLE IF NOT EXISTS tags (
+		id    INTEGER PRIMARY KEY AUTOINCREMENT,
+		name  TEXT NOT NULL UNIQUE,
+		color TEXT NOT NULL DEFAULT '39'
+	)`)
+	if err != nil {
+		return fmt.Errorf("create tags table: %w", err)
+	}
+
+	_, err = db.Exec(`CREATE TABLE IF NOT EXISTS task_tags (
+		task_id INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+		tag_id  INTEGER NOT NULL REFERENCES tags(id)  ON DELETE CASCADE,
+		PRIMARY KEY (task_id, tag_id)
+	)`)
+	if err != nil {
+		return fmt.Errorf("create task_tags table: %w", err)
+	}
+
+	return nil
+}
+
 func scanTask(scanner interface{ Scan(...any) error }) (model.Task, error) {
 	var t model.Task
 	var comp int
@@ -283,7 +310,15 @@ func (s *TaskStore) List() ([]model.Task, error) {
 		}
 		tasks = append(tasks, t)
 	}
-	return tasks, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	if err := s.loadTagsForTasks(tasks); err != nil {
+		return nil, fmt.Errorf("load tags: %w", err)
+	}
+
+	return tasks, nil
 }
 
 // GetByID retrieves a single task by its ID.
@@ -293,6 +328,11 @@ func (s *TaskStore) GetByID(id int) (model.Task, error) {
 	if err != nil {
 		return model.Task{}, fmt.Errorf("get task %d: %w", id, err)
 	}
+	tags, err := s.TagsForTask(id)
+	if err != nil {
+		return model.Task{}, fmt.Errorf("get tags for task %d: %w", id, err)
+	}
+	t.Tags = tags
 	return t, nil
 }
 
@@ -365,6 +405,122 @@ func (s *TaskStore) UpdateDescription(id int, description *string) error {
 		return fmt.Errorf("update description for task %d: %w", id, err)
 	}
 	return nil
+}
+
+// loadTagsForTasks populates the Tags field on each task using a single query.
+func (s *TaskStore) loadTagsForTasks(tasks []model.Task) error {
+	if len(tasks) == 0 {
+		return nil
+	}
+
+	rows, err := s.db.Query(
+		`SELECT tt.task_id, t.id, t.name, t.color
+		 FROM task_tags tt
+		 INNER JOIN tags t ON t.id = tt.tag_id
+		 ORDER BY t.name ASC`)
+	if err != nil {
+		return fmt.Errorf("query all task tags: %w", err)
+	}
+	defer rows.Close()
+
+	tagMap := make(map[int][]model.Tag)
+	for rows.Next() {
+		var taskID int
+		var t model.Tag
+		if err := rows.Scan(&taskID, &t.ID, &t.Name, &t.Color); err != nil {
+			return fmt.Errorf("scan task tag: %w", err)
+		}
+		tagMap[taskID] = append(tagMap[taskID], t)
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+
+	for i := range tasks {
+		if tags, ok := tagMap[tasks[i].ID]; ok {
+			tasks[i].Tags = tags
+		}
+	}
+	return nil
+}
+
+// CreateTag inserts a new tag and returns it.
+func (s *TaskStore) CreateTag(name string, color string) (model.Tag, error) {
+	res, err := s.db.Exec("INSERT INTO tags (name, color) VALUES (?, ?)", name, color)
+	if err != nil {
+		return model.Tag{}, fmt.Errorf("insert tag: %w", err)
+	}
+	id, _ := res.LastInsertId()
+	return model.Tag{ID: int(id), Name: name, Color: color}, nil
+}
+
+// ListTags returns all tags ordered by name.
+func (s *TaskStore) ListTags() ([]model.Tag, error) {
+	rows, err := s.db.Query("SELECT id, name, color FROM tags ORDER BY name ASC")
+	if err != nil {
+		return nil, fmt.Errorf("query tags: %w", err)
+	}
+	defer rows.Close()
+
+	var tags []model.Tag
+	for rows.Next() {
+		var t model.Tag
+		if err := rows.Scan(&t.ID, &t.Name, &t.Color); err != nil {
+			return nil, fmt.Errorf("scan tag: %w", err)
+		}
+		tags = append(tags, t)
+	}
+	return tags, rows.Err()
+}
+
+// DeleteTag removes a tag by ID. Associated task_tags rows cascade-delete.
+func (s *TaskStore) DeleteTag(id int) error {
+	_, err := s.db.Exec("DELETE FROM tags WHERE id = ?", id)
+	if err != nil {
+		return fmt.Errorf("delete tag %d: %w", id, err)
+	}
+	return nil
+}
+
+// AssignTag links a tag to a task. Silently succeeds if already assigned.
+func (s *TaskStore) AssignTag(taskID, tagID int) error {
+	_, err := s.db.Exec("INSERT OR IGNORE INTO task_tags (task_id, tag_id) VALUES (?, ?)", taskID, tagID)
+	if err != nil {
+		return fmt.Errorf("assign tag %d to task %d: %w", tagID, taskID, err)
+	}
+	return nil
+}
+
+// UnassignTag removes a tag from a task.
+func (s *TaskStore) UnassignTag(taskID, tagID int) error {
+	_, err := s.db.Exec("DELETE FROM task_tags WHERE task_id = ? AND tag_id = ?", taskID, tagID)
+	if err != nil {
+		return fmt.Errorf("unassign tag %d from task %d: %w", tagID, taskID, err)
+	}
+	return nil
+}
+
+// TagsForTask returns all tags assigned to a specific task.
+func (s *TaskStore) TagsForTask(taskID int) ([]model.Tag, error) {
+	rows, err := s.db.Query(
+		`SELECT t.id, t.name, t.color FROM tags t
+		 INNER JOIN task_tags tt ON t.id = tt.tag_id
+		 WHERE tt.task_id = ?
+		 ORDER BY t.name ASC`, taskID)
+	if err != nil {
+		return nil, fmt.Errorf("query tags for task %d: %w", taskID, err)
+	}
+	defer rows.Close()
+
+	var tags []model.Tag
+	for rows.Next() {
+		var t model.Tag
+		if err := rows.Scan(&t.ID, &t.Name, &t.Color); err != nil {
+			return nil, fmt.Errorf("scan tag: %w", err)
+		}
+		tags = append(tags, t)
+	}
+	return tags, rows.Err()
 }
 
 // Close closes the database connection.

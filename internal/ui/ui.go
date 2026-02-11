@@ -2,6 +2,7 @@ package ui
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/bubbles/list"
@@ -21,6 +22,7 @@ const (
 	stateConfirm
 	stateDueDate
 	stateEditDesc
+	stateTagSelect
 )
 
 var (
@@ -38,6 +40,8 @@ var (
 			Padding(0, 1).
 			Border(lipgloss.RoundedBorder()).
 			BorderForeground(lipgloss.Color("241"))
+
+	tagColorPalette = []string{"39", "205", "148", "214", "141", "81", "203", "227"}
 )
 
 type extraKeyMap struct {
@@ -46,8 +50,9 @@ type extraKeyMap struct {
 	Toggle   key.Binding
 	Delete   key.Binding
 	Today    key.Binding
-	DueDate  key.Binding
-	EditDesc key.Binding
+	DueDate   key.Binding
+	EditDesc  key.Binding
+	TagSelect key.Binding
 }
 
 func newExtraKeyMap() extraKeyMap {
@@ -80,6 +85,10 @@ func newExtraKeyMap() extraKeyMap {
 			key.WithKeys("e"),
 			key.WithHelp("e", "edit desc"),
 		),
+		TagSelect: key.NewBinding(
+			key.WithKeys("T"),
+			key.WithHelp("T", "tags"),
+		),
 	}
 }
 
@@ -95,6 +104,12 @@ type Model struct {
 	addParentID   *int
 	dueDateTaskID int
 	editTaskID    int
+	tagTaskID     int
+	allTags       []model.Tag
+	assignedTags  map[int]bool
+	tagCursor     int
+	tagCreating   bool
+	tagInput      textinput.Model
 	err           error
 	width         int
 	height        int
@@ -122,15 +137,19 @@ func NewModel(s *store.TaskStore) Model {
 	l.SetFilteringEnabled(true)
 	l.SetStatusBarItemName("task", "tasks")
 	l.AdditionalShortHelpKeys = func() []key.Binding {
-		return []key.Binding{keys.Add, keys.SubAdd, keys.Toggle, keys.Delete, keys.Today, keys.DueDate, keys.EditDesc}
+		return []key.Binding{keys.Add, keys.SubAdd, keys.Toggle, keys.Delete, keys.Today, keys.DueDate, keys.EditDesc, keys.TagSelect}
 	}
 	l.AdditionalFullHelpKeys = func() []key.Binding {
-		return []key.Binding{keys.Add, keys.SubAdd, keys.Toggle, keys.Delete, keys.Today, keys.DueDate, keys.EditDesc}
+		return []key.Binding{keys.Add, keys.SubAdd, keys.Toggle, keys.Delete, keys.Today, keys.DueDate, keys.EditDesc, keys.TagSelect}
 	}
 
 	ta := textarea.New()
 	ta.Placeholder = "Task description..."
 	ta.CharLimit = 4096
+
+	tagIn := textinput.New()
+	tagIn.Placeholder = "New tag name..."
+	tagIn.CharLimit = 32
 
 	return Model{
 		state:     stateList,
@@ -138,6 +157,7 @@ func NewModel(s *store.TaskStore) Model {
 		input:     ti,
 		dateInput: newDateInput(),
 		descInput: ta,
+		tagInput:  tagIn,
 		store:     s,
 		keys:      keys,
 	}
@@ -195,6 +215,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.updateDueDate(msg)
 	case stateEditDesc:
 		return m.updateEditDesc(msg)
+	case stateTagSelect:
+		return m.updateTagSelect(msg)
 	}
 
 	return m, nil
@@ -243,6 +265,29 @@ func (m Model) updateList(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.dateInput.SetValue(*item.Task.DueDate)
 				}
 				m.dateInput.Focus()
+				return m, nil
+			}
+		case "T":
+			if item, ok := m.list.SelectedItem().(TaskItem); ok {
+				m.tagTaskID = item.Task.ID
+				m.state = stateTagSelect
+				m.tagCursor = 0
+				m.tagCreating = false
+				allTags, err := m.store.ListTags()
+				if err != nil {
+					m.err = err
+					return m, nil
+				}
+				m.allTags = allTags
+				assigned, err := m.store.TagsForTask(item.Task.ID)
+				if err != nil {
+					m.err = err
+					return m, nil
+				}
+				m.assignedTags = make(map[int]bool)
+				for _, t := range assigned {
+					m.assignedTags[t.ID] = true
+				}
 				return m, nil
 			}
 		case "e":
@@ -319,6 +364,83 @@ func (m Model) updateEditDesc(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
+func nextTagColor(existingCount int) string {
+	return tagColorPalette[existingCount%len(tagColorPalette)]
+}
+
+func (m Model) updateTagSelect(msg tea.Msg) (tea.Model, tea.Cmd) {
+	if m.tagCreating {
+		if keyMsg, ok := msg.(tea.KeyMsg); ok {
+			switch keyMsg.String() {
+			case "enter":
+				name := strings.TrimSpace(m.tagInput.Value())
+				if name != "" {
+					tag, err := m.store.CreateTag(name, nextTagColor(len(m.allTags)))
+					if err != nil {
+						m.err = err
+					} else {
+						m.allTags = append(m.allTags, tag)
+						if err := m.store.AssignTag(m.tagTaskID, tag.ID); err != nil {
+							m.err = err
+						} else {
+							m.assignedTags[tag.ID] = true
+						}
+					}
+				}
+				m.tagCreating = false
+				m.tagInput.Reset()
+				return m, nil
+			case "esc":
+				m.tagCreating = false
+				m.tagInput.Reset()
+				return m, nil
+			}
+		}
+		var cmd tea.Cmd
+		m.tagInput, cmd = m.tagInput.Update(msg)
+		return m, cmd
+	}
+
+	if keyMsg, ok := msg.(tea.KeyMsg); ok {
+		switch keyMsg.String() {
+		case "j", "down":
+			if m.tagCursor < len(m.allTags) {
+				m.tagCursor++
+			}
+		case "k", "up":
+			if m.tagCursor > 0 {
+				m.tagCursor--
+			}
+		case "enter", " ", "x":
+			if m.tagCursor < len(m.allTags) {
+				tag := m.allTags[m.tagCursor]
+				if m.assignedTags[tag.ID] {
+					if err := m.store.UnassignTag(m.tagTaskID, tag.ID); err != nil {
+						m.err = err
+					} else {
+						delete(m.assignedTags, tag.ID)
+					}
+				} else {
+					if err := m.store.AssignTag(m.tagTaskID, tag.ID); err != nil {
+						m.err = err
+					} else {
+						m.assignedTags[tag.ID] = true
+					}
+				}
+			} else {
+				m.tagCreating = true
+				m.tagInput.Reset()
+				cmd := m.tagInput.Focus()
+				return m, cmd
+			}
+		case "esc":
+			m.state = stateList
+			return m, m.loadTasks
+		}
+	}
+	return m, nil
+}
+
 func (m Model) updateConfirm(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if keyMsg, ok := msg.(tea.KeyMsg); ok {
 		switch keyMsg.String() {
@@ -385,6 +507,19 @@ func (m Model) renderDetail() string {
 	}
 	desc := descBoxStyle.Render(descContent)
 
+	tagsLine := ""
+	if len(item.Task.Tags) > 0 {
+		var tagBadges []string
+		for _, tag := range item.Task.Tags {
+			badge := lipgloss.NewStyle().
+				Foreground(lipgloss.Color(tag.Color)).
+				Bold(true).
+				Render("[" + tag.Name + "]")
+			tagBadges = append(tagBadges, badge)
+		}
+		tagsLine = "\ntags: " + strings.Join(tagBadges, " ") + "\n"
+	}
+
 	dueLine := ""
 	if item.Task.DueDate != nil {
 		label := "due_date:  " + *item.Task.DueDate
@@ -395,13 +530,14 @@ func (m Model) renderDetail() string {
 		}
 		dueLine = "\n" + label
 	}
-	return fmt.Sprintf("%s%s\n\n%s\n\ncreated_at: %s%s\n\n%s",
+	return fmt.Sprintf("%s%s\n\n%s%s\n\ncreated_at: %s%s\n\n%s",
 		todayMark,
 		item.Task.Title,
 		desc,
+		tagsLine,
 		item.Task.CreatedAt.Format("2006-01-02 15:04"),
 		dueLine,
-		statusStyle.Render("e: edit description"),
+		statusStyle.Render("e: edit description  T: tags"),
 	)
 }
 
@@ -412,6 +548,38 @@ func (m Model) View() string {
 	}
 
 	switch m.state {
+	case stateTagSelect:
+		var lines []string
+		for i, tag := range m.allTags {
+			cursor := "  "
+			if i == m.tagCursor {
+				cursor = "> "
+			}
+			check := "[ ]"
+			if m.assignedTags[tag.ID] {
+				check = "[x]"
+			}
+			badge := lipgloss.NewStyle().
+				Foreground(lipgloss.Color(tag.Color)).
+				Render(tag.Name)
+			lines = append(lines, cursor+check+" "+badge)
+		}
+		newCursor := "  "
+		if m.tagCursor == len(m.allTags) {
+			newCursor = "> "
+		}
+		lines = append(lines, newCursor+"+ New tag...")
+
+		content := titleStyle.Render("Tags") + "\n\n" +
+			strings.Join(lines, "\n")
+
+		if m.tagCreating {
+			content += "\n\n" + m.tagInput.View()
+		}
+
+		content += "\n\n" + statusStyle.Render("j/k: navigate  enter/space: toggle  esc: done")
+
+		return appStyle.Render(content + errView)
 	case stateEditDesc:
 		return appStyle.Render(
 			titleStyle.Render("Edit Description") + "\n\n" +
