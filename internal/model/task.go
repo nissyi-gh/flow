@@ -2,6 +2,13 @@ package model
 
 import "time"
 
+// Tag represents a reusable label that can be attached to tasks.
+type Tag struct {
+	ID    int
+	Name  string
+	Color string // lipgloss 256-color code, e.g. "205", "39", "148"
+}
+
 // Task represents a single task stored in the database.
 type Task struct {
 	ID          int
@@ -12,6 +19,7 @@ type Task struct {
 	CreatedAt   time.Time
 	ScheduledOn *string
 	DueDate     *string
+	Tags        []Tag
 }
 
 // IsToday returns true if the task is scheduled for today.
