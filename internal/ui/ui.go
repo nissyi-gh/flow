@@ -5,6 +5,7 @@ import (
 
 	"github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/bubbles/list"
+	"github.com/charmbracelet/bubbles/textarea"
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -19,6 +20,7 @@ const (
 	stateAdd
 	stateConfirm
 	stateDueDate
+	stateEditDesc
 )
 
 var (
@@ -32,15 +34,20 @@ var (
 			BorderLeft(true).
 			BorderStyle(lipgloss.NormalBorder()).
 			BorderForeground(lipgloss.Color("241"))
+	descBoxStyle = lipgloss.NewStyle().
+			Padding(0, 1).
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(lipgloss.Color("241"))
 )
 
 type extraKeyMap struct {
-	Add     key.Binding
-	SubAdd  key.Binding
-	Toggle  key.Binding
-	Delete  key.Binding
-	Today   key.Binding
-	DueDate key.Binding
+	Add      key.Binding
+	SubAdd   key.Binding
+	Toggle   key.Binding
+	Delete   key.Binding
+	Today    key.Binding
+	DueDate  key.Binding
+	EditDesc key.Binding
 }
 
 func newExtraKeyMap() extraKeyMap {
@@ -69,22 +76,28 @@ func newExtraKeyMap() extraKeyMap {
 			key.WithKeys("D"),
 			key.WithHelp("D", "due date"),
 		),
+		EditDesc: key.NewBinding(
+			key.WithKeys("e"),
+			key.WithHelp("e", "edit desc"),
+		),
 	}
 }
 
 // Model is the top-level BubbleTea model for the flow TUI.
 type Model struct {
-	state       appState
-	list        list.Model
-	input       textinput.Model
-	dateInput   dateInput
-	store       *store.TaskStore
-	keys        extraKeyMap
+	state         appState
+	list          list.Model
+	input         textinput.Model
+	dateInput     dateInput
+	descInput     textarea.Model
+	store         *store.TaskStore
+	keys          extraKeyMap
 	addParentID   *int
 	dueDateTaskID int
+	editTaskID    int
 	err           error
-	width       int
-	height      int
+	width         int
+	height        int
 }
 
 type tasksLoadedMsg []model.Task
@@ -109,17 +122,22 @@ func NewModel(s *store.TaskStore) Model {
 	l.SetFilteringEnabled(true)
 	l.SetStatusBarItemName("task", "tasks")
 	l.AdditionalShortHelpKeys = func() []key.Binding {
-		return []key.Binding{keys.Add, keys.SubAdd, keys.Toggle, keys.Delete, keys.Today, keys.DueDate}
+		return []key.Binding{keys.Add, keys.SubAdd, keys.Toggle, keys.Delete, keys.Today, keys.DueDate, keys.EditDesc}
 	}
 	l.AdditionalFullHelpKeys = func() []key.Binding {
-		return []key.Binding{keys.Add, keys.SubAdd, keys.Toggle, keys.Delete, keys.Today, keys.DueDate}
+		return []key.Binding{keys.Add, keys.SubAdd, keys.Toggle, keys.Delete, keys.Today, keys.DueDate, keys.EditDesc}
 	}
+
+	ta := textarea.New()
+	ta.Placeholder = "Task description..."
+	ta.CharLimit = 4096
 
 	return Model{
 		state:     stateList,
 		list:      l,
 		input:     ti,
 		dateInput: newDateInput(),
+		descInput: ta,
 		store:     s,
 		keys:      keys,
 	}
@@ -145,7 +163,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		h, v := appStyle.GetFrameSize()
 		contentWidth := msg.Width - h
 		leftWidth := contentWidth * 60 / 100
+		rightWidth := contentWidth - leftWidth
 		m.list.SetSize(leftWidth, msg.Height-v)
+		m.descInput.SetWidth(rightWidth - 6)
+		m.descInput.SetHeight(msg.Height - v - 10)
 		return m, nil
 
 	case tasksLoadedMsg:
@@ -172,6 +193,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.updateConfirm(msg)
 	case stateDueDate:
 		return m.updateDueDate(msg)
+	case stateEditDesc:
+		return m.updateEditDesc(msg)
 	}
 
 	return m, nil
@@ -222,6 +245,17 @@ func (m Model) updateList(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.dateInput.Focus()
 				return m, nil
 			}
+		case "e":
+			if item, ok := m.list.SelectedItem().(TaskItem); ok {
+				m.state = stateEditDesc
+				m.editTaskID = item.Task.ID
+				m.descInput.Reset()
+				if item.Task.Description != nil {
+					m.descInput.SetValue(*item.Task.Description)
+				}
+				cmd := m.descInput.Focus()
+				return m, cmd
+			}
 		case "d":
 			if m.list.SelectedItem() != nil {
 				m.state = stateConfirm
@@ -257,6 +291,31 @@ func (m Model) updateAdd(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	var cmd tea.Cmd
 	m.input, cmd = m.input.Update(msg)
+	return m, cmd
+}
+
+func (m Model) updateEditDesc(msg tea.Msg) (tea.Model, tea.Cmd) {
+	if keyMsg, ok := msg.(tea.KeyMsg); ok {
+		switch keyMsg.String() {
+		case "esc":
+			val := m.descInput.Value()
+			var desc *string
+			if val != "" {
+				desc = &val
+			}
+			if err := m.store.UpdateDescription(m.editTaskID, desc); err != nil {
+				m.err = err
+			}
+			m.state = stateList
+			return m, m.loadTasks
+		case "ctrl+c":
+			m.state = stateList
+			return m, nil
+		}
+	}
+
+	var cmd tea.Cmd
+	m.descInput, cmd = m.descInput.Update(msg)
 	return m, cmd
 }
 
@@ -320,6 +379,12 @@ func (m Model) renderDetail() string {
 	if item.Task.IsToday() {
 		todayMark = "📌 "
 	}
+	descContent := statusStyle.Render("(no description)")
+	if item.Task.Description != nil && *item.Task.Description != "" {
+		descContent = *item.Task.Description
+	}
+	desc := descBoxStyle.Render(descContent)
+
 	dueLine := ""
 	if item.Task.DueDate != nil {
 		label := "due_date:  " + *item.Task.DueDate
@@ -330,11 +395,13 @@ func (m Model) renderDetail() string {
 		}
 		dueLine = "\n" + label
 	}
-	return fmt.Sprintf("%s%s\n\ncreated_at: %s%s",
+	return fmt.Sprintf("%s%s\n\n%s\n\ncreated_at: %s%s\n\n%s",
 		todayMark,
 		item.Task.Title,
+		desc,
 		item.Task.CreatedAt.Format("2006-01-02 15:04"),
 		dueLine,
+		statusStyle.Render("e: edit description"),
 	)
 }
 
@@ -345,6 +412,13 @@ func (m Model) View() string {
 	}
 
 	switch m.state {
+	case stateEditDesc:
+		return appStyle.Render(
+			titleStyle.Render("Edit Description") + "\n\n" +
+				m.descInput.View() + "\n\n" +
+				statusStyle.Render("esc: save • ctrl+c: cancel") +
+				errView,
+		)
 	case stateAdd:
 		header := "New Task"
 		if m.addParentID != nil {
