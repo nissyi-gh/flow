@@ -73,6 +73,11 @@ func NewTaskStore(dbPath string) (*TaskStore, error) {
 		return nil, fmt.Errorf("migrate parent_id: %w", err)
 	}
 
+	if err := migrateScheduledOn(db); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("migrate scheduled_on: %w", err)
+	}
+
 	return &TaskStore{db: db}, nil
 }
 
@@ -108,12 +113,45 @@ func migrateParentID(db *sql.DB) error {
 	return nil
 }
 
+func migrateScheduledOn(db *sql.DB) error {
+	rows, err := db.Query("PRAGMA table_info(tasks)")
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+
+	hasScheduledOn := false
+	for rows.Next() {
+		var cid int
+		var name, typ string
+		var notNull, pk int
+		var dfltValue sql.NullString
+		if err := rows.Scan(&cid, &name, &typ, &notNull, &dfltValue, &pk); err != nil {
+			return err
+		}
+		if name == "scheduled_on" {
+			hasScheduledOn = true
+			break
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+
+	if !hasScheduledOn {
+		_, err := db.Exec("ALTER TABLE tasks ADD COLUMN scheduled_on TEXT")
+		return err
+	}
+	return nil
+}
+
 func scanTask(scanner interface{ Scan(...any) error }) (model.Task, error) {
 	var t model.Task
 	var comp int
 	var createdStr string
 	var parentID sql.NullInt64
-	if err := scanner.Scan(&t.ID, &t.Title, &comp, &createdStr, &parentID); err != nil {
+	var scheduledOn sql.NullString
+	if err := scanner.Scan(&t.ID, &t.Title, &comp, &createdStr, &parentID, &scheduledOn); err != nil {
 		return model.Task{}, err
 	}
 	t.Completed = comp != 0
@@ -121,6 +159,10 @@ func scanTask(scanner interface{ Scan(...any) error }) (model.Task, error) {
 	if parentID.Valid {
 		pid := int(parentID.Int64)
 		t.ParentID = &pid
+	}
+	if scheduledOn.Valid {
+		s := scheduledOn.String
+		t.ScheduledOn = &s
 	}
 	return t, nil
 }
@@ -143,7 +185,7 @@ func (s *TaskStore) Add(title string, parentID *int) (model.Task, error) {
 
 // List returns all tasks ordered by creation date ascending.
 func (s *TaskStore) List() ([]model.Task, error) {
-	rows, err := s.db.Query("SELECT id, title, completed, created_at, parent_id FROM tasks ORDER BY created_at ASC")
+	rows, err := s.db.Query("SELECT id, title, completed, created_at, parent_id, scheduled_on FROM tasks ORDER BY created_at ASC")
 	if err != nil {
 		return nil, fmt.Errorf("query tasks: %w", err)
 	}
@@ -162,7 +204,7 @@ func (s *TaskStore) List() ([]model.Task, error) {
 
 // GetByID retrieves a single task by its ID.
 func (s *TaskStore) GetByID(id int) (model.Task, error) {
-	row := s.db.QueryRow("SELECT id, title, completed, created_at, parent_id FROM tasks WHERE id = ?", id)
+	row := s.db.QueryRow("SELECT id, title, completed, created_at, parent_id, scheduled_on FROM tasks WHERE id = ?", id)
 	t, err := scanTask(row)
 	if err != nil {
 		return model.Task{}, fmt.Errorf("get task %d: %w", id, err)
@@ -175,6 +217,20 @@ func (s *TaskStore) ToggleComplete(id int) error {
 	_, err := s.db.Exec("UPDATE tasks SET completed = 1 - completed WHERE id = ?", id)
 	if err != nil {
 		return fmt.Errorf("toggle task %d: %w", id, err)
+	}
+	return nil
+}
+
+// ToggleToday toggles the scheduled_on date for today.
+// If scheduled_on is already today, it clears it; otherwise sets it to today.
+func (s *TaskStore) ToggleToday(id int) error {
+	today := time.Now().Format("2006-01-02")
+	_, err := s.db.Exec(
+		"UPDATE tasks SET scheduled_on = CASE WHEN scheduled_on = ? THEN NULL ELSE ? END WHERE id = ?",
+		today, today, id,
+	)
+	if err != nil {
+		return fmt.Errorf("toggle today task %d: %w", id, err)
 	}
 	return nil
 }

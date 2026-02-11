@@ -33,6 +33,7 @@ type extraKeyMap struct {
 	SubAdd key.Binding
 	Toggle key.Binding
 	Delete key.Binding
+	Today  key.Binding
 }
 
 func newExtraKeyMap() extraKeyMap {
@@ -52,6 +53,10 @@ func newExtraKeyMap() extraKeyMap {
 		Delete: key.NewBinding(
 			key.WithKeys("d"),
 			key.WithHelp("d", "delete"),
+		),
+		Today: key.NewBinding(
+			key.WithKeys("t"),
+			key.WithHelp("t", "today"),
 		),
 	}
 }
@@ -91,10 +96,10 @@ func NewModel(s *store.TaskStore) Model {
 	l.SetFilteringEnabled(true)
 	l.SetStatusBarItemName("task", "tasks")
 	l.AdditionalShortHelpKeys = func() []key.Binding {
-		return []key.Binding{keys.Add, keys.SubAdd, keys.Toggle, keys.Delete}
+		return []key.Binding{keys.Add, keys.SubAdd, keys.Toggle, keys.Delete, keys.Today}
 	}
 	l.AdditionalFullHelpKeys = func() []key.Binding {
-		return []key.Binding{keys.Add, keys.SubAdd, keys.Toggle, keys.Delete}
+		return []key.Binding{keys.Add, keys.SubAdd, keys.Toggle, keys.Delete, keys.Today}
 	}
 
 	return Model{
@@ -175,6 +180,14 @@ func (m Model) updateList(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "enter", "x":
 			if item, ok := m.list.SelectedItem().(TaskItem); ok {
 				if err := m.store.ToggleComplete(item.Task.ID); err != nil {
+					m.err = err
+					return m, nil
+				}
+				return m, m.loadTasks
+			}
+		case "t":
+			if item, ok := m.list.SelectedItem().(TaskItem); ok {
+				if err := m.store.ToggleToday(item.Task.ID); err != nil {
 					m.err = err
 					return m, nil
 				}
