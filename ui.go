@@ -78,6 +78,8 @@ func newModel(store *TaskStore) model {
 
 	delegate := list.NewDefaultDelegate()
 	delegate.ShowDescription = false
+	delegate.SetHeight(1)
+	delegate.SetSpacing(0)
 	l := list.New(nil, delegate, 0, 0)
 	l.Title = "flow"
 	l.Styles.Title = titleStyle
