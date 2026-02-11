@@ -26,6 +26,11 @@ var (
 	statusStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
 	errorStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("196"))
 	confirmStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("212")).Bold(true)
+	detailStyle  = lipgloss.NewStyle().
+			Padding(1, 2).
+			BorderLeft(true).
+			BorderStyle(lipgloss.NormalBorder()).
+			BorderForeground(lipgloss.Color("241"))
 )
 
 type extraKeyMap struct {
@@ -129,7 +134,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.width = msg.Width
 		m.height = msg.Height
 		h, v := appStyle.GetFrameSize()
-		m.list.SetSize(msg.Width-h, msg.Height-v)
+		contentWidth := msg.Width - h
+		leftWidth := contentWidth * 60 / 100
+		m.list.SetSize(leftWidth, msg.Height-v)
 		return m, nil
 
 	case tasksLoadedMsg:
@@ -250,6 +257,22 @@ func (m Model) updateConfirm(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+func (m Model) renderDetail() string {
+	item, ok := m.list.SelectedItem().(TaskItem)
+	if !ok {
+		return ""
+	}
+	todayMark := ""
+	if item.Task.IsToday() {
+		todayMark = "📌 "
+	}
+	return fmt.Sprintf("%s%s\n\ncreated_at: %s",
+		todayMark,
+		item.Task.Title,
+		item.Task.CreatedAt.Format("2006-01-02 15:04"),
+	)
+}
+
 func (m Model) View() string {
 	var errView string
 	if m.err != nil {
@@ -282,6 +305,19 @@ func (m Model) View() string {
 				errView,
 		)
 	default:
-		return appStyle.Render(m.list.View() + errView)
+		h, v := appStyle.GetFrameSize()
+		contentWidth := m.width - h
+		contentHeight := m.height - v
+		leftWidth := contentWidth * 60 / 100
+		rightWidth := contentWidth - leftWidth
+
+		leftPane := m.list.View()
+		rightPane := detailStyle.
+			Width(rightWidth).
+			Height(contentHeight).
+			Render(m.renderDetail())
+		_ = leftWidth // leftWidth is controlled via SetSize
+		content := lipgloss.JoinHorizontal(lipgloss.Top, leftPane, rightPane)
+		return appStyle.Render(content + errView)
 	}
 }

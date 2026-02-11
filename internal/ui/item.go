@@ -24,7 +24,7 @@ func (i TaskItem) Title() string {
 	if i.Task.IsToday() {
 		todayMark = "📌 "
 	}
-	return fmt.Sprintf("%s%s %s%s  created_at: %s", i.Prefix, check, todayMark, i.Task.Title, i.Task.CreatedAt.Format("2006-01-02 15:04"))
+	return fmt.Sprintf("%s%s %s%s", i.Prefix, check, todayMark, i.Task.Title)
 }
 
 func (i TaskItem) Description() string {
