@@ -28,11 +28,11 @@ func (i taskItem) Title() string {
 	if i.task.Completed {
 		check = "[x]"
 	}
-	return fmt.Sprintf("%s%s %s", i.prefix, check, i.task.Title)
+	return fmt.Sprintf("%s%s %s  created_at: %s", i.prefix, check, i.task.Title, i.task.CreatedAt.Format("2006-01-02 15:04"))
 }
 
 func (i taskItem) Description() string {
-	return i.descPrefix + i.task.CreatedAt.Format("2006-01-02 15:04")
+	return ""
 }
 
 func (i taskItem) FilterValue() string {

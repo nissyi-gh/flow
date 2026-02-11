@@ -77,6 +77,7 @@ func newModel(store *TaskStore) model {
 	keys := newExtraKeyMap()
 
 	delegate := list.NewDefaultDelegate()
+	delegate.ShowDescription = false
 	l := list.New(nil, delegate, 0, 0)
 	l.Title = "flow"
 	l.Styles.Title = titleStyle
