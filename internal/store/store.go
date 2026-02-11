@@ -83,6 +83,11 @@ func NewTaskStore(dbPath string) (*TaskStore, error) {
 		return nil, fmt.Errorf("migrate due_date: %w", err)
 	}
 
+	if err := migrateDescription(db); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("migrate description: %w", err)
+	}
+
 	return &TaskStore{db: db}, nil
 }
 
@@ -182,6 +187,38 @@ func migrateDueDate(db *sql.DB) error {
 	return nil
 }
 
+func migrateDescription(db *sql.DB) error {
+	rows, err := db.Query("PRAGMA table_info(tasks)")
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+
+	hasDescription := false
+	for rows.Next() {
+		var cid int
+		var name, typ string
+		var notNull, pk int
+		var dfltValue sql.NullString
+		if err := rows.Scan(&cid, &name, &typ, &notNull, &dfltValue, &pk); err != nil {
+			return err
+		}
+		if name == "description" {
+			hasDescription = true
+			break
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+
+	if !hasDescription {
+		_, err := db.Exec("ALTER TABLE tasks ADD COLUMN description TEXT")
+		return err
+	}
+	return nil
+}
+
 func scanTask(scanner interface{ Scan(...any) error }) (model.Task, error) {
 	var t model.Task
 	var comp int
@@ -189,7 +226,8 @@ func scanTask(scanner interface{ Scan(...any) error }) (model.Task, error) {
 	var parentID sql.NullInt64
 	var scheduledOn sql.NullString
 	var dueDate sql.NullString
-	if err := scanner.Scan(&t.ID, &t.Title, &comp, &createdStr, &parentID, &scheduledOn, &dueDate); err != nil {
+	var description sql.NullString
+	if err := scanner.Scan(&t.ID, &t.Title, &comp, &createdStr, &parentID, &scheduledOn, &dueDate, &description); err != nil {
 		return model.Task{}, err
 	}
 	t.Completed = comp != 0
@@ -205,6 +243,10 @@ func scanTask(scanner interface{ Scan(...any) error }) (model.Task, error) {
 	if dueDate.Valid {
 		d := dueDate.String
 		t.DueDate = &d
+	}
+	if description.Valid {
+		d := description.String
+		t.Description = &d
 	}
 	return t, nil
 }
@@ -227,7 +269,7 @@ func (s *TaskStore) Add(title string, parentID *int) (model.Task, error) {
 
 // List returns all tasks ordered by creation date ascending.
 func (s *TaskStore) List() ([]model.Task, error) {
-	rows, err := s.db.Query("SELECT id, title, completed, created_at, parent_id, scheduled_on, due_date FROM tasks ORDER BY created_at ASC")
+	rows, err := s.db.Query("SELECT id, title, completed, created_at, parent_id, scheduled_on, due_date, description FROM tasks ORDER BY created_at ASC")
 	if err != nil {
 		return nil, fmt.Errorf("query tasks: %w", err)
 	}
@@ -246,7 +288,7 @@ func (s *TaskStore) List() ([]model.Task, error) {
 
 // GetByID retrieves a single task by its ID.
 func (s *TaskStore) GetByID(id int) (model.Task, error) {
-	row := s.db.QueryRow("SELECT id, title, completed, created_at, parent_id, scheduled_on, due_date FROM tasks WHERE id = ?", id)
+	row := s.db.QueryRow("SELECT id, title, completed, created_at, parent_id, scheduled_on, due_date, description FROM tasks WHERE id = ?", id)
 	t, err := scanTask(row)
 	if err != nil {
 		return model.Task{}, fmt.Errorf("get task %d: %w", id, err)
@@ -309,6 +351,20 @@ func (s *TaskStore) HasChildren(id int) (bool, error) {
 		return false, fmt.Errorf("check children of task %d: %w", id, err)
 	}
 	return count > 0, nil
+}
+
+// UpdateDescription sets the description of a task. Pass nil to clear it.
+func (s *TaskStore) UpdateDescription(id int, description *string) error {
+	var err error
+	if description != nil {
+		_, err = s.db.Exec("UPDATE tasks SET description = ? WHERE id = ?", *description, id)
+	} else {
+		_, err = s.db.Exec("UPDATE tasks SET description = NULL WHERE id = ?", id)
+	}
+	if err != nil {
+		return fmt.Errorf("update description for task %d: %w", id, err)
+	}
+	return nil
 }
 
 // Close closes the database connection.
