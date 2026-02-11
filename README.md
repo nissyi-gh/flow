@@ -27,6 +27,7 @@ flow
 | Key | Action |
 |-----|--------|
 | `a` / `n` | Add new task |
+| `s` | Add sub-task |
 | `enter` / `x` | Toggle completion |
 | `d` | Delete task (with confirmation) |
 | `/` | Filter tasks |
