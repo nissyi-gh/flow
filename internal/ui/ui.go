@@ -149,15 +149,9 @@ func NewModel(s *store.TaskStore) Model {
 	l := list.New(nil, delegate, 0, 0)
 	l.Title = "flow"
 	l.Styles.Title = titleStyle
-	l.SetShowHelp(true)
+	l.SetShowHelp(false)
 	l.SetFilteringEnabled(true)
 	l.SetStatusBarItemName("task", "tasks")
-	l.AdditionalShortHelpKeys = func() []key.Binding {
-		return []key.Binding{keys.Add, keys.SubAdd, keys.Toggle, keys.Delete, keys.Today, keys.DueDate, keys.EditDesc, keys.TagSelect, keys.Generate, keys.Import}
-	}
-	l.AdditionalFullHelpKeys = func() []key.Binding {
-		return []key.Binding{keys.Add, keys.SubAdd, keys.Toggle, keys.Delete, keys.Today, keys.DueDate, keys.EditDesc, keys.TagSelect, keys.Generate, keys.Import}
-	}
 
 	ta := textarea.New()
 	ta.Placeholder = "Task description..."
@@ -198,9 +192,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.height = msg.Height
 		h, v := appStyle.GetFrameSize()
 		contentWidth := msg.Width - h
-		leftWidth := contentWidth * 60 / 100
+		leftWidth := contentWidth / 2
 		rightWidth := contentWidth - leftWidth
-		m.list.SetSize(leftWidth, msg.Height-v)
+		helpHeight := 2
+		m.list.SetSize(leftWidth, msg.Height-v-helpHeight)
 		m.descInput.SetWidth(rightWidth - 6)
 		m.descInput.SetHeight(msg.Height - v - 10)
 		return m, nil
@@ -726,6 +721,38 @@ func (m Model) renderDetail() string {
 	return sb.String()
 }
 
+func (m Model) renderHelp(width int) string {
+	keyStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("170"))
+
+	items := []struct{ key, desc string }{
+		{"a/n", "add"}, {"s", "sub-task"}, {"enter/x", "toggle"}, {"d", "delete"},
+		{"t", "today"}, {"D", "due date"}, {"e", "edit desc"}, {"T", "tags"},
+		{"g", "AI prompt"}, {"G", "import YAML"}, {"/", "filter"}, {"q", "quit"},
+	}
+
+	var lines []string
+	line := ""
+	for _, it := range items {
+		entry := keyStyle.Render(it.key) + " " + it.desc
+		sep := statusStyle.Render(" • ")
+		if line == "" {
+			line = entry
+			continue
+		}
+		candidate := line + sep + entry
+		if lipgloss.Width(candidate) > width {
+			lines = append(lines, line)
+			line = entry
+		} else {
+			line = candidate
+		}
+	}
+	if line != "" {
+		lines = append(lines, line)
+	}
+	return strings.Join(lines, "\n")
+}
+
 func (m Model) View() string {
 	var errView string
 	if m.err != nil {
@@ -863,17 +890,19 @@ func (m Model) View() string {
 	default:
 		h, v := appStyle.GetFrameSize()
 		contentWidth := m.width - h
-		contentHeight := m.height - v
-		leftWidth := contentWidth * 60 / 100
+		helpHeight := 2
+		contentHeight := m.height - v - helpHeight
+		leftWidth := contentWidth / 2
 		rightWidth := contentWidth - leftWidth
 
-		leftPane := m.list.View()
+		leftPane := lipgloss.NewStyle().Width(leftWidth).Render(m.list.View())
 		rightPane := detailStyle.
 			Width(rightWidth).
 			Height(contentHeight).
 			Render(m.renderDetail())
 		_ = leftWidth
-		content := lipgloss.JoinHorizontal(lipgloss.Top, leftPane, rightPane)
-		return appStyle.Render(content + errView)
+		panes := lipgloss.JoinHorizontal(lipgloss.Top, leftPane, rightPane)
+		help := m.renderHelp(contentWidth)
+		return appStyle.Render(panes + "\n" + help + errView)
 	}
 }
