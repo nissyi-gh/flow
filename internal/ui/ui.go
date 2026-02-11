@@ -1,4 +1,4 @@
-package main
+package ui
 
 import (
 	"fmt"
@@ -8,6 +8,8 @@ import (
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/nissyi-gh/flow/internal/model"
+	"github.com/nissyi-gh/flow/internal/store"
 )
 
 type appState int
@@ -54,11 +56,12 @@ func newExtraKeyMap() extraKeyMap {
 	}
 }
 
-type model struct {
+// Model is the top-level BubbleTea model for the flow TUI.
+type Model struct {
 	state       appState
 	list        list.Model
 	input       textinput.Model
-	store       *TaskStore
+	store       *store.TaskStore
 	keys        extraKeyMap
 	addParentID *int
 	err         error
@@ -66,10 +69,11 @@ type model struct {
 	height      int
 }
 
-type tasksLoadedMsg []Task
+type tasksLoadedMsg []model.Task
 type errMsg struct{ error }
 
-func newModel(store *TaskStore) model {
+// NewModel creates a new TUI model.
+func NewModel(s *store.TaskStore) Model {
 	ti := textinput.New()
 	ti.Placeholder = "Task title..."
 	ti.CharLimit = 256
@@ -93,20 +97,20 @@ func newModel(store *TaskStore) model {
 		return []key.Binding{keys.Add, keys.SubAdd, keys.Toggle, keys.Delete}
 	}
 
-	return model{
+	return Model{
 		state: stateList,
 		list:  l,
 		input: ti,
-		store: store,
+		store: s,
 		keys:  keys,
 	}
 }
 
-func (m model) Init() tea.Cmd {
+func (m Model) Init() tea.Cmd {
 	return m.loadTasks
 }
 
-func (m model) loadTasks() tea.Msg {
+func (m Model) loadTasks() tea.Msg {
 	tasks, err := m.store.List()
 	if err != nil {
 		return errMsg{err}
@@ -114,63 +118,7 @@ func (m model) loadTasks() tea.Msg {
 	return tasksLoadedMsg(tasks)
 }
 
-// buildTree converts a flat task list into a tree-ordered list of taskItems
-// with tree-drawing prefixes (├─, └─, │).
-func buildTree(tasks []Task) []taskItem {
-	children := make(map[int][]Task) // parentID -> children
-	var roots []Task
-
-	for _, t := range tasks {
-		if t.ParentID == nil {
-			roots = append(roots, t)
-		} else {
-			children[*t.ParentID] = append(children[*t.ParentID], t)
-		}
-	}
-
-	var items []taskItem
-	// ancestors tracks whether each depth level's parent still has remaining siblings.
-	// true = more siblings follow (draw │), false = last child (draw space).
-	var dfs func(task Task, ancestors []bool)
-	dfs = func(task Task, ancestors []bool) {
-		depth := len(ancestors)
-		var prefix, descPrefix string
-		if depth > 0 {
-			// Build the leading columns from ancestor context
-			for _, hasSibling := range ancestors[:depth-1] {
-				if hasSibling {
-					prefix += "│  "
-					descPrefix += "│  "
-				} else {
-					prefix += "   "
-					descPrefix += "   "
-				}
-			}
-			// Current level connector
-			if ancestors[depth-1] {
-				prefix += "├─ "
-				descPrefix += "│  "
-			} else {
-				prefix += "└─ "
-				descPrefix += "   "
-			}
-		}
-
-		items = append(items, taskItem{task: task, prefix: prefix, descPrefix: descPrefix})
-		kids := children[task.ID]
-		for idx, child := range kids {
-			isLast := idx == len(kids)-1
-			dfs(child, append(ancestors, !isLast))
-		}
-	}
-
-	for _, root := range roots {
-		dfs(root, nil)
-	}
-	return items
-}
-
-func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
@@ -180,7 +128,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tasksLoadedMsg:
-		treeItems := buildTree([]Task(msg))
+		treeItems := BuildTree([]model.Task(msg))
 		items := make([]list.Item, len(treeItems))
 		for i, ti := range treeItems {
 			items[i] = ti
@@ -206,7 +154,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m model) updateList(msg tea.Msg) (tea.Model, tea.Cmd) {
+func (m Model) updateList(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if keyMsg, ok := msg.(tea.KeyMsg); ok && !m.list.SettingFilter() {
 		switch keyMsg.String() {
 		case "a", "n":
@@ -216,17 +164,17 @@ func (m model) updateList(msg tea.Msg) (tea.Model, tea.Cmd) {
 			cmd := m.input.Focus()
 			return m, cmd
 		case "s":
-			if item, ok := m.list.SelectedItem().(taskItem); ok {
+			if item, ok := m.list.SelectedItem().(TaskItem); ok {
 				m.state = stateAdd
-				id := item.task.ID
+				id := item.Task.ID
 				m.addParentID = &id
 				m.input.Reset()
 				cmd := m.input.Focus()
 				return m, cmd
 			}
 		case "enter", "x":
-			if item, ok := m.list.SelectedItem().(taskItem); ok {
-				if err := m.store.ToggleComplete(item.task.ID); err != nil {
+			if item, ok := m.list.SelectedItem().(TaskItem); ok {
+				if err := m.store.ToggleComplete(item.Task.ID); err != nil {
 					m.err = err
 					return m, nil
 				}
@@ -245,7 +193,7 @@ func (m model) updateList(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
-func (m model) updateAdd(msg tea.Msg) (tea.Model, tea.Cmd) {
+func (m Model) updateAdd(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if keyMsg, ok := msg.(tea.KeyMsg); ok {
 		switch keyMsg.String() {
 		case "enter":
@@ -270,12 +218,12 @@ func (m model) updateAdd(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
-func (m model) updateConfirm(msg tea.Msg) (tea.Model, tea.Cmd) {
+func (m Model) updateConfirm(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if keyMsg, ok := msg.(tea.KeyMsg); ok {
 		switch keyMsg.String() {
 		case "y":
-			if item, ok := m.list.SelectedItem().(taskItem); ok {
-				if err := m.store.Delete(item.task.ID); err != nil {
+			if item, ok := m.list.SelectedItem().(TaskItem); ok {
+				if err := m.store.Delete(item.Task.ID); err != nil {
 					m.err = err
 				}
 			}
@@ -289,7 +237,7 @@ func (m model) updateConfirm(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m model) View() string {
+func (m Model) View() string {
 	var errView string
 	if m.err != nil {
 		errView = "\n" + errorStyle.Render("Error: "+m.err.Error()) + "\n"
@@ -308,11 +256,11 @@ func (m model) View() string {
 				errView,
 		)
 	case stateConfirm:
-		item, _ := m.list.SelectedItem().(taskItem)
-		msg := item.task.Title
-		hasChildren, _ := m.store.HasChildren(item.task.ID)
+		item, _ := m.list.SelectedItem().(TaskItem)
+		msg := item.Task.Title
+		hasChildren, _ := m.store.HasChildren(item.Task.ID)
 		if hasChildren {
-			msg = fmt.Sprintf("%s\n  (子タスクも削除されます)", item.task.Title)
+			msg = fmt.Sprintf("%s\n  (子タスクも削除されます)", item.Task.Title)
 		}
 		return appStyle.Render(
 			confirmStyle.Render("Delete Task?") + "\n\n" +

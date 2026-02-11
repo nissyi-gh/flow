@@ -1,4 +1,4 @@
-package main
+package store
 
 import (
 	"database/sql"
@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/nissyi-gh/flow/internal/model"
 	_ "modernc.org/sqlite"
 )
 
@@ -67,7 +68,6 @@ func NewTaskStore(dbPath string) (*TaskStore, error) {
 		return nil, fmt.Errorf("create schema: %w", err)
 	}
 
-	// Migrate: add parent_id column if it doesn't exist
 	if err := migrateParentID(db); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("migrate parent_id: %w", err)
@@ -108,13 +108,13 @@ func migrateParentID(db *sql.DB) error {
 	return nil
 }
 
-func scanTask(scanner interface{ Scan(...any) error }) (Task, error) {
-	var t Task
+func scanTask(scanner interface{ Scan(...any) error }) (model.Task, error) {
+	var t model.Task
 	var comp int
 	var createdStr string
 	var parentID sql.NullInt64
 	if err := scanner.Scan(&t.ID, &t.Title, &comp, &createdStr, &parentID); err != nil {
-		return Task{}, err
+		return model.Task{}, err
 	}
 	t.Completed = comp != 0
 	t.CreatedAt, _ = time.Parse("2006-01-02 15:04:05", createdStr)
@@ -126,7 +126,7 @@ func scanTask(scanner interface{ Scan(...any) error }) (Task, error) {
 }
 
 // Add inserts a new task and returns it. parentID can be nil for root tasks.
-func (s *TaskStore) Add(title string, parentID *int) (Task, error) {
+func (s *TaskStore) Add(title string, parentID *int) (model.Task, error) {
 	var res sql.Result
 	var err error
 	if parentID != nil {
@@ -135,21 +135,21 @@ func (s *TaskStore) Add(title string, parentID *int) (Task, error) {
 		res, err = s.db.Exec("INSERT INTO tasks (title) VALUES (?)", title)
 	}
 	if err != nil {
-		return Task{}, fmt.Errorf("insert task: %w", err)
+		return model.Task{}, fmt.Errorf("insert task: %w", err)
 	}
 	id, _ := res.LastInsertId()
 	return s.GetByID(int(id))
 }
 
 // List returns all tasks ordered by creation date ascending.
-func (s *TaskStore) List() ([]Task, error) {
+func (s *TaskStore) List() ([]model.Task, error) {
 	rows, err := s.db.Query("SELECT id, title, completed, created_at, parent_id FROM tasks ORDER BY created_at ASC")
 	if err != nil {
 		return nil, fmt.Errorf("query tasks: %w", err)
 	}
 	defer rows.Close()
 
-	var tasks []Task
+	var tasks []model.Task
 	for rows.Next() {
 		t, err := scanTask(rows)
 		if err != nil {
@@ -161,11 +161,11 @@ func (s *TaskStore) List() ([]Task, error) {
 }
 
 // GetByID retrieves a single task by its ID.
-func (s *TaskStore) GetByID(id int) (Task, error) {
+func (s *TaskStore) GetByID(id int) (model.Task, error) {
 	row := s.db.QueryRow("SELECT id, title, completed, created_at, parent_id FROM tasks WHERE id = ?", id)
 	t, err := scanTask(row)
 	if err != nil {
-		return Task{}, fmt.Errorf("get task %d: %w", id, err)
+		return model.Task{}, fmt.Errorf("get task %d: %w", id, err)
 	}
 	return t, nil
 }
