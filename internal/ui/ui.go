@@ -18,6 +18,7 @@ const (
 	stateList appState = iota
 	stateAdd
 	stateConfirm
+	stateDueDate
 )
 
 var (
@@ -34,11 +35,12 @@ var (
 )
 
 type extraKeyMap struct {
-	Add    key.Binding
-	SubAdd key.Binding
-	Toggle key.Binding
-	Delete key.Binding
-	Today  key.Binding
+	Add     key.Binding
+	SubAdd  key.Binding
+	Toggle  key.Binding
+	Delete  key.Binding
+	Today   key.Binding
+	DueDate key.Binding
 }
 
 func newExtraKeyMap() extraKeyMap {
@@ -63,6 +65,10 @@ func newExtraKeyMap() extraKeyMap {
 			key.WithKeys("t"),
 			key.WithHelp("t", "today"),
 		),
+		DueDate: key.NewBinding(
+			key.WithKeys("D"),
+			key.WithHelp("D", "due date"),
+		),
 	}
 }
 
@@ -71,10 +77,12 @@ type Model struct {
 	state       appState
 	list        list.Model
 	input       textinput.Model
+	dateInput   dateInput
 	store       *store.TaskStore
 	keys        extraKeyMap
-	addParentID *int
-	err         error
+	addParentID   *int
+	dueDateTaskID int
+	err           error
 	width       int
 	height      int
 }
@@ -101,18 +109,19 @@ func NewModel(s *store.TaskStore) Model {
 	l.SetFilteringEnabled(true)
 	l.SetStatusBarItemName("task", "tasks")
 	l.AdditionalShortHelpKeys = func() []key.Binding {
-		return []key.Binding{keys.Add, keys.SubAdd, keys.Toggle, keys.Delete, keys.Today}
+		return []key.Binding{keys.Add, keys.SubAdd, keys.Toggle, keys.Delete, keys.Today, keys.DueDate}
 	}
 	l.AdditionalFullHelpKeys = func() []key.Binding {
-		return []key.Binding{keys.Add, keys.SubAdd, keys.Toggle, keys.Delete, keys.Today}
+		return []key.Binding{keys.Add, keys.SubAdd, keys.Toggle, keys.Delete, keys.Today, keys.DueDate}
 	}
 
 	return Model{
-		state: stateList,
-		list:  l,
-		input: ti,
-		store: s,
-		keys:  keys,
+		state:     stateList,
+		list:      l,
+		input:     ti,
+		dateInput: newDateInput(),
+		store:     s,
+		keys:      keys,
 	}
 }
 
@@ -161,6 +170,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.updateAdd(msg)
 	case stateConfirm:
 		return m.updateConfirm(msg)
+	case stateDueDate:
+		return m.updateDueDate(msg)
 	}
 
 	return m, nil
@@ -199,6 +210,17 @@ func (m Model) updateList(msg tea.Msg) (tea.Model, tea.Cmd) {
 					return m, nil
 				}
 				return m, m.loadTasks
+			}
+		case "D":
+			if item, ok := m.list.SelectedItem().(TaskItem); ok {
+				m.state = stateDueDate
+				m.dueDateTaskID = item.Task.ID
+				m.dateInput = newDateInput()
+				if item.Task.DueDate != nil {
+					m.dateInput.SetValue(*item.Task.DueDate)
+				}
+				m.dateInput.Focus()
+				return m, nil
 			}
 		case "d":
 			if m.list.SelectedItem() != nil {
@@ -257,6 +279,38 @@ func (m Model) updateConfirm(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+func (m Model) updateDueDate(msg tea.Msg) (tea.Model, tea.Cmd) {
+	if keyMsg, ok := msg.(tea.KeyMsg); ok {
+		switch keyMsg.String() {
+		case "enter":
+			if m.dateInput.IsEmpty() {
+				if err := m.store.SetDueDate(m.dueDateTaskID, nil); err != nil {
+					m.err = err
+				}
+				m.state = stateList
+				return m, m.loadTasks
+			}
+			val, err := m.dateInput.Value()
+			if err != nil {
+				m.err = err
+				return m, nil
+			}
+			if err := m.store.SetDueDate(m.dueDateTaskID, &val); err != nil {
+				m.err = err
+			}
+			m.state = stateList
+			return m, m.loadTasks
+		case "esc":
+			m.state = stateList
+			return m, nil
+		}
+	}
+
+	var cmd tea.Cmd
+	m.dateInput, cmd = m.dateInput.Update(msg)
+	return m, cmd
+}
+
 func (m Model) renderDetail() string {
 	item, ok := m.list.SelectedItem().(TaskItem)
 	if !ok {
@@ -266,10 +320,21 @@ func (m Model) renderDetail() string {
 	if item.Task.IsToday() {
 		todayMark = "📌 "
 	}
-	return fmt.Sprintf("%s%s\n\ncreated_at: %s",
+	dueLine := ""
+	if item.Task.DueDate != nil {
+		label := "due_date:  " + *item.Task.DueDate
+		if item.Task.IsOverdue() {
+			label = errorStyle.Render("⚠️ " + label)
+		} else if item.Task.IsDueToday() {
+			label = "📅 " + label
+		}
+		dueLine = "\n" + label
+	}
+	return fmt.Sprintf("%s%s\n\ncreated_at: %s%s",
 		todayMark,
 		item.Task.Title,
 		item.Task.CreatedAt.Format("2006-01-02 15:04"),
+		dueLine,
 	)
 }
 
@@ -289,6 +354,13 @@ func (m Model) View() string {
 			titleStyle.Render(header) + "\n\n" +
 				m.input.View() + "\n\n" +
 				statusStyle.Render("enter: save • esc: cancel") +
+				errView,
+		)
+	case stateDueDate:
+		return appStyle.Render(
+			titleStyle.Render("Set Due Date") + "\n\n" +
+				m.dateInput.View() + "\n\n" +
+				statusStyle.Render("tab/→: next field • enter: save • esc: cancel") +
 				errView,
 		)
 	case stateConfirm:

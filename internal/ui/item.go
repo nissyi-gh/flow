@@ -24,7 +24,13 @@ func (i TaskItem) Title() string {
 	if i.Task.IsToday() {
 		todayMark = "📌 "
 	}
-	return fmt.Sprintf("%s%s %s%s", i.Prefix, check, todayMark, i.Task.Title)
+	dueMark := ""
+	if i.Task.IsOverdue() {
+		dueMark = "⚠️ "
+	} else if i.Task.IsDueToday() {
+		dueMark = "📅 "
+	}
+	return fmt.Sprintf("%s%s %s%s%s", i.Prefix, check, dueMark, todayMark, i.Task.Title)
 }
 
 func (i TaskItem) Description() string {
