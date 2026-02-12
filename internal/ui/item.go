@@ -31,7 +31,11 @@ func (i TaskItem) Title() string {
 	} else if i.Task.IsDueToday() {
 		dueMark = "📅 "
 	}
-	title := fmt.Sprintf("%s%s %s%s%s", i.Prefix, check, dueMark, todayMark, i.Task.Title)
+	taskTitle := fmt.Sprintf("%s%s%s", dueMark, todayMark, i.Task.Title)
+	if i.Task.Completed {
+		taskTitle = lipgloss.NewStyle().Strikethrough(true).Render(taskTitle)
+	}
+	title := fmt.Sprintf("%s%s %s", i.Prefix, check, taskTitle)
 
 	for _, tag := range i.Task.Tags {
 		badge := lipgloss.NewStyle().
