@@ -9,12 +9,22 @@ type Tag struct {
 	Color string // lipgloss 256-color code, e.g. "205", "39", "148"
 }
 
+// TaskStatus represents the progress state of a task.
+type TaskStatus int
+
+const (
+	StatusNotStarted  TaskStatus = 0
+	StatusInProgress  TaskStatus = 1
+	StatusCompleted   TaskStatus = 2
+)
+
 // Task represents a single task stored in the database.
 type Task struct {
 	ID          int
 	Title       string
 	Description *string
-	Completed   bool
+	Completed   bool // true when Status == StatusCompleted
+	Status      TaskStatus
 	ParentID    *int
 	CreatedAt   time.Time
 	ScheduledOn *string

@@ -257,7 +257,8 @@ func scanTask(scanner interface{ Scan(...any) error }) (model.Task, error) {
 	if err := scanner.Scan(&t.ID, &t.Title, &comp, &createdStr, &parentID, &scheduledOn, &dueDate, &description); err != nil {
 		return model.Task{}, err
 	}
-	t.Completed = comp != 0
+	t.Status = model.TaskStatus(comp)
+	t.Completed = t.Status == model.StatusCompleted
 	t.CreatedAt, _ = time.Parse("2006-01-02 15:04:05", createdStr)
 	if parentID.Valid {
 		pid := int(parentID.Int64)
@@ -336,11 +337,15 @@ func (s *TaskStore) GetByID(id int) (model.Task, error) {
 	return t, nil
 }
 
-// ToggleComplete atomically flips the completed status of a task.
-func (s *TaskStore) ToggleComplete(id int) error {
-	_, err := s.db.Exec("UPDATE tasks SET completed = 1 - completed WHERE id = ?", id)
+// SetStatus sets the task status to the given value.
+// Passing the current status resets to 0 (not started).
+func (s *TaskStore) SetStatus(id int, status model.TaskStatus) error {
+	_, err := s.db.Exec(
+		"UPDATE tasks SET completed = CASE WHEN completed = ? THEN 0 ELSE ? END WHERE id = ?",
+		status, status, id,
+	)
 	if err != nil {
-		return fmt.Errorf("toggle task %d: %w", id, err)
+		return fmt.Errorf("set status task %d: %w", id, err)
 	}
 	return nil
 }
