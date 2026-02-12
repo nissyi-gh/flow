@@ -17,9 +17,14 @@ type TaskItem struct {
 }
 
 func (i TaskItem) Title() string {
-	check := "[ ]"
-	if i.Task.Completed {
+	var check string
+	switch i.Task.Status {
+	case model.StatusInProgress:
+		check = "[-]"
+	case model.StatusCompleted:
 		check = "[x]"
+	default:
+		check = "[ ]"
 	}
 	todayMark := ""
 	if i.Task.IsToday() {

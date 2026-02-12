@@ -328,9 +328,17 @@ func (m Model) updateList(msg tea.Msg) (tea.Model, tea.Cmd) {
 				cmd := m.input.Focus()
 				return m, cmd
 			}
+		case "p":
+			if item, ok := m.list.SelectedItem().(TaskItem); ok {
+				if err := m.store.SetStatus(item.Task.ID, model.StatusInProgress); err != nil {
+					m.err = err
+					return m, nil
+				}
+				return m, m.loadTasks
+			}
 		case "enter", "x":
 			if item, ok := m.list.SelectedItem().(TaskItem); ok {
-				if err := m.store.ToggleComplete(item.Task.ID); err != nil {
+				if err := m.store.SetStatus(item.Task.ID, model.StatusCompleted); err != nil {
 					m.err = err
 					return m, nil
 				}
@@ -812,7 +820,7 @@ func (m Model) renderHelp(width int) string {
 	keyStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("39"))
 
 	items := []struct{ key, desc string }{
-		{"a/n", "add"}, {"s", "sub-task"}, {"enter/x", "toggle"}, {"d", "delete"},
+		{"a/n", "add"}, {"s", "sub-task"}, {"p", "progress"}, {"enter/x", "done"}, {"d", "delete"},
 		{"t", "today"}, {"D", "due date"}, {"e", "edit desc"}, {"T", "tags"},
 		{"v", "view"}, {"g", "AI prompt"}, {"G", "import YAML"}, {"/", "filter"}, {"q", "quit"},
 	}
