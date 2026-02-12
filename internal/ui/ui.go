@@ -695,6 +695,9 @@ func (m Model) renderDetail() string {
 		}
 	}
 	titleLine := item.Task.Title
+	if item.Task.Completed {
+		titleLine = lipgloss.NewStyle().Strikethrough(true).Render(titleLine)
+	}
 	if len(marks) > 0 {
 		titleLine = strings.Join(marks, " ") + " " + titleLine
 	}
