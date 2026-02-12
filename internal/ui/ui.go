@@ -17,6 +17,13 @@ import (
 	"github.com/nissyi-gh/flow/internal/store"
 )
 
+type viewMode int
+
+const (
+	viewAll viewMode = iota
+	viewToday
+)
+
 type appState int
 
 const (
@@ -127,6 +134,7 @@ type Model struct {
 	importYAML      string
 	importResult    string
 	importIsError   bool
+	viewMode       viewMode
 	err            error
 	width          int
 	height         int
@@ -182,6 +190,15 @@ func NewModel(s *store.TaskStore) Model {
 	}
 }
 
+func (m Model) viewTitle() string {
+	switch m.viewMode {
+	case viewToday:
+		return "flow [📌 today]"
+	default:
+		return "flow"
+	}
+}
+
 func (m Model) Init() tea.Cmd {
 	return m.loadTasks
 }
@@ -210,12 +227,45 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tasksLoadedMsg:
-		treeItems := BuildTree([]model.Task(msg))
+		tasks := []model.Task(msg)
+		if m.viewMode == viewToday {
+			taskByID := make(map[int]model.Task)
+			for _, t := range tasks {
+				taskByID[t.ID] = t
+			}
+			include := make(map[int]bool)
+			for _, t := range tasks {
+				if t.IsToday() {
+					// Include the task and all its ancestors
+					for cur := &t; cur != nil; {
+						if include[cur.ID] {
+							break
+						}
+						include[cur.ID] = true
+						if cur.ParentID != nil {
+							p := taskByID[*cur.ParentID]
+							cur = &p
+						} else {
+							cur = nil
+						}
+					}
+				}
+			}
+			var filtered []model.Task
+			for _, t := range tasks {
+				if include[t.ID] {
+					filtered = append(filtered, t)
+				}
+			}
+			tasks = filtered
+		}
+		treeItems := BuildTree(tasks)
 		items := make([]list.Item, len(treeItems))
 		for i, ti := range treeItems {
 			items[i] = ti
 		}
 		m.list.SetItems(items)
+		m.list.Title = m.viewTitle()
 		m.err = nil
 		return m, nil
 
@@ -256,6 +306,13 @@ func (m Model) updateList(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "esc", "q":
 			m.state = stateQuitConfirm
 			return m, nil
+		case "v":
+			if m.viewMode == viewAll {
+				m.viewMode = viewToday
+			} else {
+				m.viewMode = viewAll
+			}
+			return m, m.loadTasks
 		case "a", "n":
 			m.state = stateAdd
 			m.addParentID = nil
@@ -757,7 +814,7 @@ func (m Model) renderHelp(width int) string {
 	items := []struct{ key, desc string }{
 		{"a/n", "add"}, {"s", "sub-task"}, {"enter/x", "toggle"}, {"d", "delete"},
 		{"t", "today"}, {"D", "due date"}, {"e", "edit desc"}, {"T", "tags"},
-		{"g", "AI prompt"}, {"G", "import YAML"}, {"/", "filter"}, {"q", "quit"},
+		{"v", "view"}, {"g", "AI prompt"}, {"G", "import YAML"}, {"/", "filter"}, {"q", "quit"},
 	}
 
 	var lines []string
