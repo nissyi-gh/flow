@@ -24,19 +24,19 @@ func BuildTree(tasks []model.Task) []TaskItem {
 		if depth > 0 {
 			for _, hasSibling := range ancestors[:depth-1] {
 				if hasSibling {
-					prefix += "│  "
-					descPrefix += "│  "
+					prefix += " │  "
+					descPrefix += " │  "
 				} else {
-					prefix += "   "
-					descPrefix += "   "
+					prefix += "    "
+					descPrefix += "    "
 				}
 			}
 			if ancestors[depth-1] {
-				prefix += "├─ "
-				descPrefix += "│  "
+				prefix += " ├─ "
+				descPrefix += " │  "
 			} else {
-				prefix += "└─ "
-				descPrefix += "   "
+				prefix += " └─ "
+				descPrefix += "    "
 			}
 		}
 
