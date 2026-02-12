@@ -413,6 +413,17 @@ func (m Model) updateList(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.importCursor = 0
 			m.state = stateImportSelect
 			return m, nil
+		case "c":
+			md := m.tasksToMarkdown()
+			if err := clipboard.WriteAll(md); err != nil {
+				m.importResult = fmt.Sprintf("クリップボードへのコピーに失敗しました: %v", err)
+				m.importIsError = true
+			} else {
+				m.importResult = "タスク一覧をクリップボードにコピーしました"
+				m.importIsError = false
+			}
+			m.state = stateImportResult
+			return m, nil
 		case "d":
 			if m.list.SelectedItem() != nil {
 				m.state = stateConfirm
@@ -652,6 +663,45 @@ func (m Model) doImport(parentID *int) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+func (m Model) tasksToMarkdown() string {
+	items := m.list.Items()
+	taskByID := make(map[int]model.Task)
+	for _, it := range items {
+		if t, ok := it.(TaskItem); ok {
+			taskByID[t.Task.ID] = t.Task
+		}
+	}
+	var sb strings.Builder
+	for _, item := range items {
+		ti, ok := item.(TaskItem)
+		if !ok {
+			continue
+		}
+		depth := 0
+		pid := ti.Task.ParentID
+		for pid != nil {
+			depth++
+			if parent, ok := taskByID[*pid]; ok {
+				pid = parent.ParentID
+			} else {
+				break
+			}
+		}
+		indent := strings.Repeat("  ", depth)
+		var check string
+		switch ti.Task.Status {
+		case model.StatusInProgress:
+			check = "[-]"
+		case model.StatusCompleted:
+			check = "[x]"
+		default:
+			check = "[ ]"
+		}
+		sb.WriteString(fmt.Sprintf("%s- %s %s\n", indent, check, ti.Task.Title))
+	}
+	return sb.String()
+}
+
 func stripCodeBlock(s string) string {
 	lines := strings.Split(s, "\n")
 	var result []string
@@ -822,7 +872,7 @@ func (m Model) renderHelp(width int) string {
 	items := []struct{ key, desc string }{
 		{"a/n", "add"}, {"s", "sub-task"}, {"p", "progress"}, {"enter/x", "done"}, {"d", "delete"},
 		{"t", "today"}, {"D", "due date"}, {"e", "edit desc"}, {"T", "tags"},
-		{"v", "view"}, {"g", "AI prompt"}, {"G", "import YAML"}, {"/", "filter"}, {"q", "quit"},
+		{"c", "copy"}, {"v", "view"}, {"g", "AI prompt"}, {"G", "import YAML"}, {"/", "filter"}, {"q", "quit"},
 	}
 
 	var lines []string
