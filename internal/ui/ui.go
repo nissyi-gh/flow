@@ -29,6 +29,7 @@ const (
 	stateGenerate
 	stateImportSelect
 	stateImportResult
+	stateQuitConfirm
 )
 
 var (
@@ -242,6 +243,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.updateImportSelect(msg)
 	case stateImportResult:
 		return m.updateImportResult(msg)
+	case stateQuitConfirm:
+		return m.updateQuitConfirm(msg)
 	}
 
 	return m, nil
@@ -250,6 +253,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m Model) updateList(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if keyMsg, ok := msg.(tea.KeyMsg); ok && !m.list.SettingFilter() {
 		switch keyMsg.String() {
+		case "esc", "q":
+			m.state = stateQuitConfirm
+			return m, nil
 		case "a", "n":
 			m.state = stateAdd
 			m.addParentID = nil
@@ -633,6 +639,19 @@ func (m Model) updateConfirm(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+func (m Model) updateQuitConfirm(msg tea.Msg) (tea.Model, tea.Cmd) {
+	if keyMsg, ok := msg.(tea.KeyMsg); ok {
+		switch keyMsg.String() {
+		case "y":
+			return m, tea.Quit
+		case "n", "esc":
+			m.state = stateList
+			return m, nil
+		}
+	}
+	return m, nil
+}
+
 func (m Model) updateDueDate(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if keyMsg, ok := msg.(tea.KeyMsg); ok {
 		switch keyMsg.String() {
@@ -883,6 +902,12 @@ func (m Model) View() string {
 			titleStyle.Render("Set Due Date") + "\n\n" +
 				m.dateInput.View() + "\n\n" +
 				statusStyle.Render("tab/→: next field • enter: save • esc: cancel") +
+				errView,
+		)
+	case stateQuitConfirm:
+		return appStyle.Render(
+			confirmStyle.Render("Quit flow?") + "\n\n" +
+				statusStyle.Render("y: quit • n/esc: cancel") +
 				errView,
 		)
 	case stateConfirm:
