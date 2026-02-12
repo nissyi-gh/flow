@@ -35,16 +35,16 @@ func (i TaskItem) Title() string {
 	if i.Task.Completed {
 		taskTitle = lipgloss.NewStyle().Strikethrough(true).Render(taskTitle)
 	}
-	title := fmt.Sprintf("%s%s %s", i.Prefix, check, taskTitle)
 
+	var tags string
 	for _, tag := range i.Task.Tags {
 		badge := lipgloss.NewStyle().
 			Foreground(lipgloss.Color(tag.Color)).
 			Render("[" + tag.Name + "]")
-		title += " " + badge
+		tags += badge + " "
 	}
 
-	return title
+	return fmt.Sprintf("%s%s %s%s", i.Prefix, check, tags, taskTitle)
 }
 
 func (i TaskItem) Description() string {
